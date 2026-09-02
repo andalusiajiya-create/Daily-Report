@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Laporan Harian Warehouse</title>
+<link rel="icon" href="data:," />
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  html, body, #root { height: 100%; margin: 0; }
+  body { background: #F5F6F1; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useCallback, useRef } = React;
+
+// ---------- design tokens ----------
+const COLORS = {
+  bg: "#F5F6F1",
+  surface: "#FFFFFF",
+  ink: "#152318",
+  inkSoft: "#57685C",
+  brand: "#1F5E3C",
+  brandDark: "#0F3521",
+  line: "#DEE4D9",
+  lineSoft: "#EAEDE6",
+};
+
+// status option sets per QC type, with their own colors
+const STATUS_SETS = {
+  qc1: {
+    label: "QC 1",
+    options: [
+      { value: "Available", color: "#2FA866", bg: "#EAF7EE", border: "#2FA866" },
+      { value: "In Repair", color: "#C8503F", bg: "#FBEAE8", border: "#C8503F" },
+      { value: "Pending", color: "#B8860B", bg: "#FBF3DE", border: "#C99A2E" },
+    ],
+  },
+  qc2: {
+    label: "QC 2",
+    options: [
+      { value: "Prepare to Deploy", color: "#3B6FB0", bg: "#E9F1FB", border: "#3B6FB0" },
+      { value: "Ready to Deploy", color: "#2FA866", bg: "#EAF7EE", border: "#2FA866" },
+    ],
+  },
+};
+
+// independent of QC1/QC2 — tags whether a group is tied to an event or a
+// permanent deployment location, since both QC types can contain either
+const CATEGORY_OPTIONS = ["Event", "Permanent Deployment", "New Unit Intake"];
+
+// ⚠️ GANTI dengan URL Web App Apps Script kamu (lihat Code.gs untuk cara deploy)
+// Contoh: "https://script.google.com/macros/s/AKfycb.../exec"
+const GAS_URL = "https://script.google.com/macros/s/AKfycbwObBuuLqq5aufqyvpDVHpwQwNunJ7wJuXbfRthGIF0vZ8fF6GVCf2PK8i9_72reAIU/exec";
+
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const uid = () => Math.random().toString(36).slice(2, 10);
+
+function emptyUnit(section) {
+  return { id: uid(), name: "", terminalId: "", simcard: "", status: STATUS_SETS[section].options[0].value, photo: null };
+}
+function emptyGroup(section, name = "") {
+  return { id: uid(), name, category: "Event", units: [emptyUnit(section)] };
+}
+function defaultSection(section) {
+  return { groups: [emptyGroup(section, "Kelompok Baru")] };
+}
+function defaultReport(date) {
+  return { date, qc1: defaultSection("qc1"), qc2: defaultSection("qc2"), note: "" };
+}
+
+// compress an uploaded image client-side so it stays small in storage
+function compressImage(file, maxWidth = 480, quality = 0.62) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxWidth / img.width);
+        const w = Math.round(img.width * scale);
+        const h = Math.round(img.height * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function App() {
+  const [date, setDate] = useState(todayStr());
+  const [report, setReport] = useState(null);
+  const [section, setSection] = useState("qc1"); // active tab: qc1 | qc2
+  const [savedDates, setSavedDates] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
+  const [error, setError] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [lightbox, setLightbox] = useState(null); // { src, label } | null
+
+  const isConfigured = GAS_URL && GAS_URL.indexOf("PASTE_URL") === -1;
+
+  const loadDates = useCallback(async () => {
+    if (!isConfigured) return;
+    try {
+      const res = await fetch(`${GAS_URL}?action=list`);
+      const data = await res.json();
+      setSavedDates(data.dates || []);
+    } catch (e) {
+      setSavedDates([]);
+    }
+  }, [isConfigured]);
+
+  const loadReport = useCallback(
+    async (d) => {
+      setLoading(true);
+      setError("");
+      if (!isConfigured) {
+        setReport(defaultReport(d));
+        setLoading(false);
+        setError("Sambungan ke Google Sheets belum diatur. Isi GAS_URL di bagian atas kode dengan URL Web App Apps Script kamu.");
+        return;
+      }
+      try {
+        const res = await fetch(`${GAS_URL}?action=get&date=${encodeURIComponent(d)}`);
+        const data = await res.json();
+        if (data.exists && data.report) {
+          const parsed = data.report;
+          if (!parsed.qc1 || parsed.qc1.groups.length === 0) parsed.qc1 = defaultSection("qc1");
+          if (!parsed.qc2 || parsed.qc2.groups.length === 0) parsed.qc2 = defaultSection("qc2");
+          setReport(parsed);
+        } else {
+          setReport(defaultReport(d));
+        }
+      } catch (e) {
+        setReport(defaultReport(d));
+        setError("Gagal memuat dari Google Sheets. Cek koneksi atau URL Apps Script.");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [isConfigured]
+  );
+
+  useEffect(() => {
+    loadDates();
+  }, [loadDates]);
+
+  useEffect(() => {
+    loadReport(date);
+  }, [date, loadReport]);
+
+  const saveReport = async () => {
+    if (!report) return;
+    if (!isConfigured) {
+      setError("Sambungan ke Google Sheets belum diatur. Isi GAS_URL di bagian atas kode.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch(GAS_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" }, // avoids CORS preflight on Apps Script
+        body: JSON.stringify({ action: "save", date, report }),
+      });
+      const data = await res.json();
+      if (data && data.report) {
+        setReport(data.report); // canonical version, photos now point to Drive URLs
+      }
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 1800);
+      await loadDates();
+    } catch (e) {
+      setError("Gagal menyimpan ke Google Sheets. Coba lagi.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteReport = async () => {
+    if (!window.confirm(`Hapus laporan tanggal ${date}?`)) return;
+    if (!isConfigured) return;
+    try {
+      await fetch(GAS_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action: "delete", date }),
+      });
+      await loadDates();
+      setReport(defaultReport(date));
+    } catch (e) {
+      setError("Gagal menghapus.");
+    }
+  };
+
+  // ---- mutation helpers, scoped to active section ----
+  const updateGroup = (gid, patch) => {
+    setReport((r) => ({
+      ...r,
+      [section]: { groups: r[section].groups.map((g) => (g.id === gid ? { ...g, ...patch } : g)) },
+    }));
+  };
+  const updateUnit = (gid, unitId, patch) => {
+    setReport((r) => ({
+      ...r,
+      [section]: {
+        groups: r[section].groups.map((g) =>
+          g.id === gid ? { ...g, units: g.units.map((u) => (u.id === unitId ? { ...u, ...patch } : u)) } : g
+        ),
+      },
+    }));
+  };
+  const addGroup = () => {
+    setReport((r) => ({ ...r, [section]: { groups: [...r[section].groups, emptyGroup(section, "")] } }));
+  };
+  const removeGroup = (gid) => {
+    setReport((r) => ({ ...r, [section]: { groups: r[section].groups.filter((g) => g.id !== gid) } }));
+  };
+  const addUnit = (gid) => {
+    setReport((r) => ({
+      ...r,
+      [section]: {
+        groups: r[section].groups.map((g) => (g.id === gid ? { ...g, units: [...g.units, emptyUnit(section)] } : g)),
+      },
+    }));
+  };
+  const removeUnit = (gid, unitId) => {
+    setReport((r) => ({
+      ...r,
+      [section]: {
+        groups: r[section].groups.map((g) => (g.id === gid ? { ...g, units: g.units.filter((u) => u.id !== unitId) } : g)),
+      },
+    }));
+  };
+
+  const handlePhotoUpload = async (gid, unitId, file) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setError("File harus berupa gambar.");
+      return;
+    }
+    try {
+      const dataUrl = await compressImage(file);
+      updateUnit(gid, unitId, { photo: dataUrl });
+      setError("");
+    } catch (e) {
+      setError("Gagal memproses foto.");
+    }
+  };
+
+  // stats per section, computed for whichever section is active
+  const statsFor = useCallback(
+    (sec) => {
+      if (!report) return { total: 0, byStatus: {} };
+      const opts = STATUS_SETS[sec].options.map((o) => o.value);
+      const byStatus = Object.fromEntries(opts.map((o) => [o, 0]));
+      let total = 0;
+      report[sec].groups.forEach((g) =>
+        g.units.forEach((u) => {
+          if (!u.name && !u.terminalId) return;
+          total += 1;
+          if (byStatus[u.status] !== undefined) byStatus[u.status] += 1;
+        })
+      );
+      return { total, byStatus };
+    },
+    [report]
+  );
+
+  const activeStats = useMemo(() => statsFor(section), [statsFor, section]);
+
+  const fmtDateLabel = (d) => {
+    const dt = new Date(d + "T00:00:00");
+    return dt.toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" });
+  };
+
+  return (
+    <div
+      id="app-root"
+      style={{
+        fontFamily: "'Inter', system-ui, sans-serif",
+        background: COLORS.bg,
+        color: COLORS.ink,
+        minHeight: "100%",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
+        * { box-sizing: border-box; }
+        input, textarea, select { font-family: inherit; }
+        input:focus, textarea:focus, select:focus { outline: 2px solid ${COLORS.brand}; outline-offset: 1px; }
+        button:focus-visible { outline: 2px solid ${COLORS.brand}; outline-offset: 2px; }
+        ::placeholder { color: #9AA79E; }
+        .mono { font-family: 'IBM Plex Mono', monospace; }
+        .disp { font-family: 'Space Grotesk', sans-serif; }
+        @keyframes pulseDot {
+          0% { box-shadow: 0 0 0 0 rgba(47,168,102,0.45); }
+          70% { box-shadow: 0 0 0 6px rgba(47,168,102,0); }
+          100% { box-shadow: 0 0 0 0 rgba(47,168,102,0); }
+        }
+        .liveDot { animation: pulseDot 2s infinite; }
+        @media (max-width: 780px) {
+          .layout { grid-template-columns: 1fr !important; }
+          .sidebar { display: none !important; }
+          .sidebar.open { display: flex !important; position: fixed; z-index: 20; top:0; left:0; bottom:0; }
+        }
+        #print-area { display: none; }
+        @media print {
+          @page { size: A4; margin: 14mm 12mm; }
+          html, body { background: #fff !important; }
+          #app-root > *:not(#print-area) { display: none !important; }
+          #print-area { display: block !important; }
+        }
+      `}</style>
+
+      {/* row 1: title + date */}
+      <div
+        style={{
+          background: COLORS.brand,
+          color: "#fff",
+          padding: "14px 20px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+        }}
+      >
+        <div>
+          <div className="disp" style={{ fontWeight: 700, fontSize: 17, letterSpacing: 0.2 }}>
+            Laporan Harian Warehouse
+          </div>
+        </div>
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          style={{
+            background: "rgba(255,255,255,0.95)",
+            border: "none",
+            borderRadius: 6,
+            padding: "7px 10px",
+            fontSize: 13,
+            color: COLORS.ink,
+            fontWeight: 600,
+          }}
+        />
+      </div>
+
+      {/* row 2: action bar - QC1 / QC2 */}
+      <div
+        style={{
+          background: COLORS.surface,
+          borderBottom: `1px solid ${COLORS.line}`,
+          padding: "10px 20px",
+          display: "flex",
+          gap: 10,
+          overflowX: "auto",
+        }}
+      >
+        {Object.entries(STATUS_SETS).map(([key, cfg]) => (
+          <button
+            key={key}
+            onClick={() => setSection(key)}
+            style={{
+              padding: "9px 22px",
+              borderRadius: 10,
+              border: `1px solid ${section === key ? COLORS.brand : COLORS.line}`,
+              background: section === key ? COLORS.brand : "transparent",
+              color: section === key ? "#fff" : COLORS.ink,
+              cursor: "pointer",
+              minWidth: 110,
+            }}
+          >
+            <span className="disp" style={{ fontWeight: 700, fontSize: 13.5 }}>
+              {cfg.label}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <div className="layout" style={{ display: "grid", gridTemplateColumns: "220px 1fr", flex: 1, minHeight: 0 }}>
+        {/* sidebar: history */}
+        <div
+          className={`sidebar ${sidebarOpen ? "open" : ""}`}
+          style={{
+            background: COLORS.surface,
+            borderRight: `1px solid ${COLORS.line}`,
+            padding: "18px 14px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            overflowY: "auto",
+          }}
+        >
+          <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.inkSoft, letterSpacing: 0.6, textTransform: "uppercase" }}>
+            Riwayat Laporan
+          </div>
+          {savedDates.length === 0 && (
+            <div style={{ fontSize: 12.5, color: COLORS.inkSoft, lineHeight: 1.5 }}>
+              Belum ada laporan tersimpan. Isi data lalu tekan Simpan.
+            </div>
+          )}
+          {savedDates.map((d) => (
+            <button
+              key={d}
+              onClick={() => {
+                setDate(d);
+                setSidebarOpen(false);
+              }}
+              style={{
+                textAlign: "left",
+                background: d === date ? COLORS.lineSoft : "transparent",
+                border: `1px solid ${d === date ? COLORS.brand : "transparent"}`,
+                borderRadius: 8,
+                padding: "8px 10px",
+                cursor: "pointer",
+                fontSize: 12.5,
+                color: COLORS.ink,
+                fontWeight: d === date ? 700 : 500,
+              }}
+            >
+              {fmtDateLabel(d)}
+            </button>
+          ))}
+        </div>
+
+        {/* main content */}
+        <div style={{ padding: "22px 24px 60px", overflowY: "auto" }}>
+          {loading || !report ? (
+            <div style={{ padding: 40, color: COLORS.inkSoft }}>Memuat laporan…</div>
+          ) : (
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14, marginBottom: 18 }}>
+                <div>
+                  <h1 className="disp" style={{ fontSize: 22, fontWeight: 700, margin: 0, color: COLORS.brandDark }}>
+                    {STATUS_SETS[section].label}
+                  </h1>
+                  <div style={{ fontSize: 13, color: COLORS.inkSoft, marginTop: 3 }}>{fmtDateLabel(date)}</div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={deleteReport} style={btnGhost}>
+                    Hapus
+                  </button>
+                  <button onClick={() => window.print()} style={btnGhost}>
+                    Cetak / Ekspor PDF
+                  </button>
+                  <button onClick={saveReport} disabled={saving} style={btnPrimary}>
+                    {saving ? "Menyimpan…" : savedFlash ? "✓ Tersimpan" : "Simpan Laporan"}
+                  </button>
+                </div>
+              </div>
+
+              {error && (
+                <div style={{ background: "#FBEAE8", color: "#C8503F", padding: "8px 12px", borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
+                  {error}
+                </div>
+              )}
+
+              {/* summary cards, scoped to active QC section */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 24 }}>
+                <SummaryCard label="Total Unit" value={activeStats.total} color={COLORS.brandDark} />
+                {STATUS_SETS[section].options.map((opt) => (
+                  <SummaryCard key={opt.value} label={opt.value} value={activeStats.byStatus[opt.value] || 0} color={opt.color} dot dotColor={opt.color} />
+                ))}
+              </div>
+
+              {/* groups for active section */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+                {report[section].groups.map((g) => (
+                  <GroupBlock
+                    key={g.id}
+                    section={section}
+                    group={g}
+                    onUpdateGroup={(patch) => updateGroup(g.id, patch)}
+                    onRemoveGroup={() => removeGroup(g.id)}
+                    onAddUnit={() => addUnit(g.id)}
+                    onRemoveUnit={(unitId) => removeUnit(g.id, unitId)}
+                    onUpdateUnit={(unitId, patch) => updateUnit(g.id, unitId, patch)}
+                    onPhotoUpload={(unitId, file) => handlePhotoUpload(g.id, unitId, file)}
+                    onOpenLightbox={(src, label) => setLightbox({ src, label })}
+                    canRemoveGroup={report[section].groups.length > 1}
+                  />
+                ))}
+              </div>
+
+              <button onClick={addGroup} style={{ ...btnGhost, marginTop: 14, width: "100%", borderStyle: "dashed" }}>
+                + Tambah Kelompok Event / Lokasi
+              </button>
+
+              <div style={{ marginTop: 26 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: COLORS.inkSoft, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  Catatan Tambahan
+                </label>
+                <textarea
+                  value={report.note}
+                  onChange={(e) => setReport((r) => ({ ...r, note: e.target.value }))}
+                  placeholder="Catatan QC, kendala, atau info lain untuk laporan hari ini…"
+                  rows={3}
+                  style={{
+                    width: "100%",
+                    marginTop: 6,
+                    padding: "10px 12px",
+                    borderRadius: 8,
+                    border: `1px solid ${COLORS.line}`,
+                    fontSize: 13.5,
+                    resize: "vertical",
+                    background: COLORS.surface,
+                  }}
+                />
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {lightbox && (
+        <div
+          onClick={() => setLightbox(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(10,20,14,0.82)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 50,
+            padding: 24,
+          }}
+        >
+          <img src={lightbox.src} alt={lightbox.label} style={{ maxWidth: "92vw", maxHeight: "80vh", borderRadius: 10, boxShadow: "0 8px 40px rgba(0,0,0,0.4)" }} />
+          <div style={{ color: "#fff", marginTop: 12, fontSize: 13.5, fontWeight: 600 }}>{lightbox.label}</div>
+          <button
+            onClick={() => setLightbox(null)}
+            style={{ marginTop: 14, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.3)", color: "#fff", borderRadius: 8, padding: "7px 16px", fontSize: 13, cursor: "pointer" }}
+          >
+            Tutup
+          </button>
+        </div>
+      )}
+
+      {report && <PrintReport report={report} date={date} fmtDateLabel={fmtDateLabel} />}
+    </div>
+  );
+}
+
+// Print-only view: renders the FULL report (QC1 + QC2 + photos) regardless of
+// which tab is active on screen. Hidden by default, shown via @media print
+// when the "Cetak / Ekspor PDF" button calls window.print().
+function PrintReport({ report, date, fmtDateLabel }) {
+  return (
+    <div id="print-area">
+      <div style={{ borderBottom: `3px solid ${COLORS.brand}`, paddingBottom: 10, marginBottom: 16 }}>
+        <div className="disp" style={{ fontSize: 20, fontWeight: 700, color: COLORS.brandDark }}>
+          Laporan Harian Warehouse
+        </div>
+        <div style={{ fontSize: 12.5, color: COLORS.inkSoft, marginTop: 2 }}>{fmtDateLabel(date)}</div>
+      </div>
+
+      {Object.keys(STATUS_SETS).map((sec) => (
+        <PrintSection key={sec} sectionKey={sec} data={report[sec]} />
+      ))}
+
+      {report.note && report.note.trim() && (
+        <div style={{ marginTop: 10, pageBreakInside: "avoid" }}>
+          <div className="disp" style={{ fontSize: 13, fontWeight: 700, color: COLORS.brandDark, marginBottom: 4 }}>
+            Catatan Tambahan
+          </div>
+          <div style={{ fontSize: 12, color: COLORS.ink, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{report.note}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PrintSection({ sectionKey, data }) {
+  const cfg = STATUS_SETS[sectionKey];
+  const opts = cfg.options;
+  const allUnits = [];
+  data.groups.forEach((g) => g.units.forEach((u) => { if (u.name || u.terminalId) allUnits.push({ ...u, groupName: g.name }); }));
+  const counts = opts.map((o) => ({ ...o, count: allUnits.filter((u) => u.status === o.value).length }));
+  const withPhoto = allUnits.filter((u) => u.photo);
+
+  return (
+    <div style={{ marginBottom: 22, pageBreakInside: "auto" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6 }}>
+        <div className="disp" style={{ fontSize: 15, fontWeight: 700, color: COLORS.brandDark }}>
+          {cfg.label}
+        </div>
+        <div style={{ fontSize: 11, color: COLORS.inkSoft }}>
+          {counts.map((c) => `${c.value}: ${c.count}`).join("  ·  ")}
+        </div>
+      </div>
+
+      {data.groups.map((g) => {
+        const units = g.units.filter((u) => u.name || u.terminalId);
+        if (units.length === 0) return null;
+        return (
+          <div key={g.id} style={{ marginBottom: 12, pageBreakInside: "avoid" }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: COLORS.ink, margin: "8px 0 4px" }}>
+              {g.name || "Tanpa nama kelompok"}
+              <span style={{ fontWeight: 500, color: COLORS.inkSoft, fontSize: 11 }}> — {g.category || "Event"}</span>
+            </div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+              <thead>
+                <tr style={{ background: COLORS.lineSoft }}>
+                  <th style={printTh}>No.</th>
+                  <th style={printTh}>Location Name</th>
+                  <th style={printTh}>Terminal ID</th>
+                  <th style={printTh}>Simcard</th>
+                  <th style={printTh}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {units.map((u, i) => {
+                  const o = opts.find((x) => x.value === u.status) || opts[0];
+                  return (
+                    <tr key={u.id}>
+                      <td style={printTd}>{i + 1}</td>
+                      <td style={printTd}>{u.name}</td>
+                      <td style={{ ...printTd, fontFamily: "'IBM Plex Mono', monospace" }}>{u.terminalId}</td>
+                      <td style={{ ...printTd, fontFamily: "'IBM Plex Mono', monospace" }}>{u.simcard}</td>
+                      <td style={{ ...printTd, fontWeight: 700, color: o.color }}>{u.status}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+
+      {withPhoto.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.ink, marginBottom: 6 }}>
+            Lampiran Foto — {cfg.label} ({withPhoto.length} unit)
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+            {withPhoto.map((u) => (
+              <div key={u.id} style={{ pageBreakInside: "avoid", textAlign: "center" }}>
+                <img
+                  src={u.photo}
+                  alt={u.name || u.terminalId}
+                  style={{ width: "100%", height: 90, objectFit: "cover", borderRadius: 6, border: `1px solid ${COLORS.line}` }}
+                />
+                <div style={{ fontSize: 9.5, fontWeight: 700, marginTop: 3, color: COLORS.ink }}>{u.name || "—"}</div>
+                <div style={{ fontSize: 8.5, color: COLORS.inkSoft, fontFamily: "'IBM Plex Mono', monospace" }}>{u.terminalId}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const printTh = { textAlign: "left", padding: "5px 7px", border: `1px solid ${COLORS.line}`, fontWeight: 700, color: COLORS.inkSoft, fontSize: 10, textTransform: "uppercase" };
+const printTd = { padding: "5px 7px", border: `1px solid ${COLORS.line}` };
+
+function SummaryCard({ label, value, color, dot, dotColor }) {
+  return (
+    <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 10, padding: "14px 16px" }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.inkSoft, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+        {label}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+        {dot && <span className="liveDot" style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />}
+        <span className="disp" style={{ fontSize: 22, fontWeight: 700, color }}>
+          {value}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function GroupBlock({ section, group, onUpdateGroup, onRemoveGroup, onAddUnit, onRemoveUnit, onUpdateUnit, onPhotoUpload, onOpenLightbox, canRemoveGroup }) {
+  const opts = STATUS_SETS[section].options;
+  const filled = group.units.filter((u) => u.name || u.terminalId);
+
+  return (
+    <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 12, overflow: "hidden" }}>
+      <div
+        style={{
+          background: COLORS.lineSoft,
+          padding: "10px 14px",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          borderBottom: `1px solid ${COLORS.line}`,
+        }}
+      >
+        <input
+          value={group.name}
+          onChange={(e) => onUpdateGroup({ name: e.target.value })}
+          placeholder="Nama kelompok / event (mis. RI Fest)"
+          className="disp"
+          style={{ flex: 1, background: "transparent", border: "none", fontSize: 15, fontWeight: 700, color: COLORS.brandDark, padding: "4px 2px" }}
+        />
+        <select
+          value={group.category || "Event"}
+          onChange={(e) => onUpdateGroup({ category: e.target.value })}
+          style={{
+            border: `1px solid ${COLORS.line}`,
+            background: COLORS.surface,
+            color: COLORS.ink,
+            borderRadius: 20,
+            padding: "4px 10px",
+            fontSize: 11.5,
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          {CATEGORY_OPTIONS.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        <span style={{ fontSize: 12, color: COLORS.inkSoft, whiteSpace: "nowrap" }} className="mono">
+          {filled.length} unit
+        </span>
+        {canRemoveGroup && (
+          <button onClick={onRemoveGroup} style={btnIcon} aria-label="Hapus kelompok">
+            ✕
+          </button>
+        )}
+      </div>
+
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ textAlign: "left", color: COLORS.inkSoft, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4 }}>
+              <th style={th}>Foto</th>
+              <th style={th}>Location Name</th>
+              <th style={th}>Terminal ID</th>
+              <th style={th}>Simcard</th>
+              <th style={th}>Status</th>
+              <th style={{ ...th, width: 36 }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {group.units.map((u) => {
+              const cfg = opts.find((o) => o.value === u.status) || opts[0];
+              return (
+                <tr key={u.id} style={{ borderTop: `1px solid ${COLORS.lineSoft}` }}>
+                  <td style={td}>
+                    <PhotoCell
+                      unit={u}
+                      onUpload={(file) => onPhotoUpload(u.id, file)}
+                      onRemove={() => onUpdateUnit(u.id, { photo: null })}
+                      onView={() => onOpenLightbox(u.photo, u.name || u.terminalId || "Foto unit")}
+                    />
+                  </td>
+                  <td style={td}>
+                    <input value={u.name} onChange={(e) => onUpdateUnit(u.id, { name: e.target.value })} placeholder="RI Fest-1" style={cellInput} />
+                  </td>
+                  <td style={td}>
+                    <input
+                      value={u.terminalId}
+                      onChange={(e) => onUpdateUnit(u.id, { terminalId: e.target.value })}
+                      placeholder="nas_0072010800000560"
+                      className="mono"
+                      style={{ ...cellInput, fontSize: 12.5 }}
+                    />
+                  </td>
+                  <td style={td}>
+                    <input
+                      value={u.simcard}
+                      onChange={(e) => onUpdateUnit(u.id, { simcard: e.target.value })}
+                      placeholder="081413965862"
+                      className="mono"
+                      style={{ ...cellInput, fontSize: 12.5 }}
+                    />
+                  </td>
+                  <td style={td}>
+                    <select
+                      value={u.status}
+                      onChange={(e) => onUpdateUnit(u.id, { status: e.target.value })}
+                      style={{
+                        border: `1px solid ${cfg.border}`,
+                        background: cfg.bg,
+                        color: cfg.color,
+                        borderRadius: 20,
+                        padding: "5px 10px",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {opts.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.value}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td style={td}>
+                    <button onClick={() => onRemoveUnit(u.id)} style={btnIcon} aria-label="Hapus unit">
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ padding: "8px 14px 12px" }}>
+        <button onClick={onAddUnit} style={{ ...btnGhost, fontSize: 12.5, padding: "6px 12px" }}>
+          + Tambah Unit
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PhotoCell({ unit, onUpload, onRemove, onView }) {
+  const inputRef = useRef(null);
+
+  if (unit.photo) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <button
+          onClick={onView}
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 8,
+            overflow: "hidden",
+            border: `1px solid ${COLORS.line}`,
+            padding: 0,
+            cursor: "pointer",
+            flexShrink: 0,
+          }}
+          aria-label="Lihat foto"
+        >
+          <img src={unit.photo} alt="Bukti QC" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        </button>
+        <button onClick={onRemove} style={{ ...btnIcon, fontSize: 11 }} aria-label="Hapus foto">
+          ✕
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <button
+        onClick={() => inputRef.current && inputRef.current.click()}
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: 8,
+          border: `1px dashed ${COLORS.line}`,
+          background: COLORS.lineSoft,
+          color: COLORS.inkSoft,
+          fontSize: 16,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+        aria-label="Unggah foto"
+        title="Unggah foto bukti QC"
+      >
+        +
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        onChange={(e) => {
+          const file = e.target.files && e.target.files[0];
+          onUpload(file);
+          e.target.value = "";
+        }}
+        style={{ display: "none" }}
+      />
+    </>
+  );
+}
+
+const th = { padding: "8px 12px" };
+const td = { padding: "6px 12px", verticalAlign: "middle" };
+const cellInput = { width: "100%", border: "none", background: "transparent", fontSize: 13, padding: "6px 4px", borderRadius: 6, color: COLORS.ink };
+const btnPrimary = { background: COLORS.brand, color: "#fff", border: "none", borderRadius: 8, padding: "9px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer" };
+const btnGhost = { background: "transparent", color: COLORS.brand, border: `1px solid ${COLORS.line}`, borderRadius: 8, padding: "9px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
+const btnIcon = { background: "transparent", border: "none", color: COLORS.inkSoft, cursor: "pointer", fontSize: 13, padding: "4px 6px", borderRadius: 6 };
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>
