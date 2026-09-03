@@ -21,8 +21,6 @@
 <div id="boot-error"></div>
 
 <script>
-  // Surface any script error directly on the page instead of a silent blank
-  // screen, so problems can be diagnosed from a screenshot alone.
   window.addEventListener('error', function (e) {
     var box = document.getElementById('boot-error');
     box.style.display = 'block';
@@ -479,7 +477,16 @@ function App() {
                   <button onClick={deleteReport} style={btnGhost}>
                     Hapus
                   </button>
-                  <button onClick={() => window.print()} style={btnGhost}>
+                  <button
+                    onClick={() => {
+                      if (!date) {
+                        setError("Tanggal belum diisi/tidak valid. Pilih ulang tanggal di kanan atas.");
+                        return;
+                      }
+                      window.print();
+                    }}
+                    style={btnGhost}
+                  >
                     Cetak / Ekspor PDF
                   </button>
                   <button onClick={saveReport} disabled={saving} style={btnPrimary}>
