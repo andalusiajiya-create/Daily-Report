@@ -68,8 +68,9 @@ const STATUS_SETS = {
 // types can contain any of these
 const CATEGORY_OPTIONS = ["Event", "Permanent Deployment", "New Unit Intake"];
 
-// ⚠️ GANTI dengan URL Web App Apps Script kamu (lihat Code.gs untuk cara deploy)
-const GAS_URL = "https://script.google.com/macros/s/AKfycbwObBuuLqq5aufqyvpDVHpwQwNunJ7wJuXbfRthGIF0vZ8fF6GVCf2PK8i9_72reAIU/exec";
+// data is stored in this browser's localStorage — persists across sessions
+// on this device, but doesn't sync to other devices/browsers
+const STORAGE_PREFIX = "qc_warehouse_report::";
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -123,49 +124,41 @@ function App() {
   const [error, setError] = useState("");
   const [lightbox, setLightbox] = useState(null);
 
-  const isConfigured = GAS_URL && GAS_URL.indexOf("PASTE_URL") === -1;
-
-  const loadDates = useCallback(async () => {
-    if (!isConfigured) return;
+  const loadDates = useCallback(() => {
     try {
-      const res = await fetch(`${GAS_URL}?action=list`);
-      const data = await res.json();
-      setSavedDates((data.dates || []).filter((d) => d && d.trim()));
+      const dates = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(STORAGE_PREFIX)) {
+          dates.push(key.slice(STORAGE_PREFIX.length));
+        }
+      }
+      setSavedDates(dates.sort().reverse());
     } catch (e) {
       setSavedDates([]);
     }
-  }, [isConfigured]);
+  }, []);
 
-  const loadReport = useCallback(
-    async (d) => {
-      setLoading(true);
-      setError("");
-      if (!isConfigured) {
+  const loadReport = useCallback((d) => {
+    setLoading(true);
+    setError("");
+    try {
+      const raw = localStorage.getItem(STORAGE_PREFIX + d);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (!parsed.qc1 || parsed.qc1.groups.length === 0) parsed.qc1 = defaultSection("qc1");
+        if (!parsed.qc2 || parsed.qc2.groups.length === 0) parsed.qc2 = defaultSection("qc2");
+        setReport(parsed);
+      } else {
         setReport(defaultReport(d));
-        setLoading(false);
-        setError("Sambungan ke Google Sheets belum diatur. Isi GAS_URL di bagian atas kode.");
-        return;
       }
-      try {
-        const res = await fetch(`${GAS_URL}?action=get&date=${encodeURIComponent(d)}`);
-        const data = await res.json();
-        if (data.exists && data.report) {
-          const parsed = data.report;
-          if (!parsed.qc1 || parsed.qc1.groups.length === 0) parsed.qc1 = defaultSection("qc1");
-          if (!parsed.qc2 || parsed.qc2.groups.length === 0) parsed.qc2 = defaultSection("qc2");
-          setReport(parsed);
-        } else {
-          setReport(defaultReport(d));
-        }
-      } catch (e) {
-        setReport(defaultReport(d));
-        setError("Gagal memuat dari Google Sheets. Cek koneksi atau URL Apps Script.");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [isConfigured]
-  );
+    } catch (e) {
+      setReport(defaultReport(d));
+      setError("Gagal memuat laporan tersimpan.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     loadDates();
@@ -174,46 +167,31 @@ function App() {
     loadReport(date);
   }, [date, loadReport]);
 
-  const saveReport = async () => {
+  const saveReport = () => {
     if (!report) return;
     if (!date) {
       setError("Tanggal belum diisi. Pilih tanggal dulu sebelum menyimpan.");
       return;
     }
-    if (!isConfigured) {
-      setError("Sambungan ke Google Sheets belum diatur.");
-      return;
-    }
     setSaving(true);
     setError("");
     try {
-      const res = await fetch(GAS_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action: "save", date, report }),
-      });
-      const data = await res.json();
-      if (data && data.report) setReport(data.report);
+      localStorage.setItem(STORAGE_PREFIX + date, JSON.stringify(report));
       setSavedFlash(true);
       setTimeout(() => setSavedFlash(false), 1800);
-      await loadDates();
+      loadDates();
     } catch (e) {
-      setError("Gagal menyimpan ke Google Sheets. Coba lagi.");
+      setError("Gagal menyimpan. Kemungkinan penyimpanan browser penuh — coba kurangi jumlah/ukuran foto.");
     } finally {
       setSaving(false);
     }
   };
 
-  const deleteReport = async () => {
+  const deleteReport = () => {
     if (!window.confirm(`Hapus laporan tanggal ${date}?`)) return;
-    if (!isConfigured) return;
     try {
-      await fetch(GAS_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action: "delete", date }),
-      });
-      await loadDates();
+      localStorage.removeItem(STORAGE_PREFIX + date);
+      loadDates();
       setReport(defaultReport(date));
     } catch (e) {
       setError("Gagal menghapus.");
