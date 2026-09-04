@@ -10,7 +10,7 @@
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 <style>
   html, body, #root { height: 100%; margin: 0; }
-  body { background: #F5F6F1; font-family: system-ui, sans-serif; }
+  body { background: #F3F4EF; font-family: system-ui, sans-serif; }
   #boot-error { display:none; padding:20px; color:#7a1f1f; background:#fdecea; border:1px solid #f3b7b0; border-radius:8px; margin:20px; white-space:pre-wrap; font-size:13px; line-height:1.5; }
 </style>
 </head>
@@ -34,17 +34,17 @@ const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
 // ---------- design tokens ----------
 const COLORS = {
-  bg: "#F5F6F1",
+  bg: "#F3F4EF",
   surface: "#FFFFFF",
   ink: "#152318",
-  inkSoft: "#57685C",
+  inkSoft: "#5B6B60",
+  inkFaint: "#8B978E",
   brand: "#1F5E3C",
   brandDark: "#0F3521",
-  line: "#DEE4D9",
-  lineSoft: "#EAEDE6",
+  line: "#E1E6DD",
+  lineSoft: "#EEF1EA",
 };
 
-// status option sets per QC type, with their own colors
 const STATUS_SETS = {
   qc1: {
     label: "QC 1",
@@ -63,12 +63,12 @@ const STATUS_SETS = {
   },
 };
 
-// independent of QC1/QC2 — tags whether a group is tied to an event or a
-// permanent deployment location, since both QC types can contain either
+// independent of QC1/QC2 — tags whether a group is tied to an event, a
+// permanent deployment location, or a newly purchased unit, since both QC
+// types can contain any of these
 const CATEGORY_OPTIONS = ["Event", "Permanent Deployment", "New Unit Intake"];
 
 // ⚠️ GANTI dengan URL Web App Apps Script kamu (lihat Code.gs untuk cara deploy)
-// Contoh: "https://script.google.com/macros/s/AKfycb.../exec"
 const GAS_URL = "https://script.google.com/macros/s/AKfycbwObBuuLqq5aufqyvpDVHpwQwNunJ7wJuXbfRthGIF0vZ8fF6GVCf2PK8i9_72reAIU/exec";
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -77,11 +77,11 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 function emptyUnit(section) {
   return { id: uid(), name: "", terminalId: "", simcard: "", status: STATUS_SETS[section].options[0].value, photo: null };
 }
-function emptyGroup(section, name = "") {
+function emptyGroup(section, name = "Kelompok Baru") {
   return { id: uid(), name, category: "Event", units: [emptyUnit(section)] };
 }
 function defaultSection(section) {
-  return { groups: [emptyGroup(section, "Kelompok Baru")] };
+  return { groups: [emptyGroup(section)] };
 }
 function defaultReport(date) {
   return { date, qc1: defaultSection("qc1"), qc2: defaultSection("qc2"), note: "" };
@@ -115,14 +115,13 @@ function compressImage(file, maxWidth = 480, quality = 0.62) {
 function App() {
   const [date, setDate] = useState(todayStr());
   const [report, setReport] = useState(null);
-  const [section, setSection] = useState("qc1"); // active tab: qc1 | qc2
+  const [section, setSection] = useState("qc1");
   const [savedDates, setSavedDates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   const [error, setError] = useState("");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [lightbox, setLightbox] = useState(null); // { src, label } | null
+  const [lightbox, setLightbox] = useState(null);
 
   const isConfigured = GAS_URL && GAS_URL.indexOf("PASTE_URL") === -1;
 
@@ -131,8 +130,7 @@ function App() {
     try {
       const res = await fetch(`${GAS_URL}?action=list`);
       const data = await res.json();
-      const dates = (data.dates || []).filter((d) => d && d.trim());
-      setSavedDates(dates);
+      setSavedDates((data.dates || []).filter((d) => d && d.trim()));
     } catch (e) {
       setSavedDates([]);
     }
@@ -145,7 +143,7 @@ function App() {
       if (!isConfigured) {
         setReport(defaultReport(d));
         setLoading(false);
-        setError("Sambungan ke Google Sheets belum diatur. Isi GAS_URL di bagian atas kode dengan URL Web App Apps Script kamu.");
+        setError("Sambungan ke Google Sheets belum diatur. Isi GAS_URL di bagian atas kode.");
         return;
       }
       try {
@@ -172,7 +170,6 @@ function App() {
   useEffect(() => {
     loadDates();
   }, [loadDates]);
-
   useEffect(() => {
     loadReport(date);
   }, [date, loadReport]);
@@ -180,11 +177,11 @@ function App() {
   const saveReport = async () => {
     if (!report) return;
     if (!date) {
-      setError("Tanggal belum diisi. Pilih tanggal dulu di pojok kanan atas sebelum menyimpan.");
+      setError("Tanggal belum diisi. Pilih tanggal dulu sebelum menyimpan.");
       return;
     }
     if (!isConfigured) {
-      setError("Sambungan ke Google Sheets belum diatur. Isi GAS_URL di bagian atas kode.");
+      setError("Sambungan ke Google Sheets belum diatur.");
       return;
     }
     setSaving(true);
@@ -192,13 +189,11 @@ function App() {
     try {
       const res = await fetch(GAS_URL, {
         method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" }, // avoids CORS preflight on Apps Script
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify({ action: "save", date, report }),
       });
       const data = await res.json();
-      if (data && data.report) {
-        setReport(data.report); // canonical version, photos now point to Drive URLs
-      }
+      if (data && data.report) setReport(data.report);
       setSavedFlash(true);
       setTimeout(() => setSavedFlash(false), 1800);
       await loadDates();
@@ -225,14 +220,9 @@ function App() {
     }
   };
 
-  // ---- mutation helpers, scoped to active section ----
-  const updateGroup = (gid, patch) => {
-    setReport((r) => ({
-      ...r,
-      [section]: { groups: r[section].groups.map((g) => (g.id === gid ? { ...g, ...patch } : g)) },
-    }));
-  };
-  const updateUnit = (gid, unitId, patch) => {
+  const updateGroup = (gid, patch) =>
+    setReport((r) => ({ ...r, [section]: { groups: r[section].groups.map((g) => (g.id === gid ? { ...g, ...patch } : g)) } }));
+  const updateUnit = (gid, unitId, patch) =>
     setReport((r) => ({
       ...r,
       [section]: {
@@ -241,29 +231,18 @@ function App() {
         ),
       },
     }));
-  };
-  const addGroup = () => {
-    setReport((r) => ({ ...r, [section]: { groups: [...r[section].groups, emptyGroup(section, "")] } }));
-  };
-  const removeGroup = (gid) => {
-    setReport((r) => ({ ...r, [section]: { groups: r[section].groups.filter((g) => g.id !== gid) } }));
-  };
-  const addUnit = (gid) => {
+  const addGroup = () => setReport((r) => ({ ...r, [section]: { groups: [...r[section].groups, emptyGroup(section)] } }));
+  const removeGroup = (gid) => setReport((r) => ({ ...r, [section]: { groups: r[section].groups.filter((g) => g.id !== gid) } }));
+  const addUnit = (gid) =>
     setReport((r) => ({
       ...r,
-      [section]: {
-        groups: r[section].groups.map((g) => (g.id === gid ? { ...g, units: [...g.units, emptyUnit(section)] } : g)),
-      },
+      [section]: { groups: r[section].groups.map((g) => (g.id === gid ? { ...g, units: [...g.units, emptyUnit(section)] } : g)) },
     }));
-  };
-  const removeUnit = (gid, unitId) => {
+  const removeUnit = (gid, unitId) =>
     setReport((r) => ({
       ...r,
-      [section]: {
-        groups: r[section].groups.map((g) => (g.id === gid ? { ...g, units: g.units.filter((u) => u.id !== unitId) } : g)),
-      },
+      [section]: { groups: r[section].groups.map((g) => (g.id === gid ? { ...g, units: g.units.filter((u) => u.id !== unitId) } : g)) },
     }));
-  };
 
   const handlePhotoUpload = async (gid, unitId, file) => {
     if (!file) return;
@@ -280,7 +259,6 @@ function App() {
     }
   };
 
-  // stats per section, computed for whichever section is active
   const statsFor = useCallback(
     (sec) => {
       if (!report) return { total: 0, byStatus: {} };
@@ -298,7 +276,6 @@ function App() {
     },
     [report]
   );
-
   const activeStats = useMemo(() => statsFor(section), [statsFor, section]);
 
   const fmtDateLabel = (d) => {
@@ -311,14 +288,7 @@ function App() {
   return (
     <div
       id="app-root"
-      style={{
-        fontFamily: "'Inter', system-ui, sans-serif",
-        background: COLORS.bg,
-        color: COLORS.ink,
-        minHeight: "100%",
-        display: "flex",
-        flexDirection: "column",
-      }}
+      style={{ fontFamily: "'Inter', system-ui, sans-serif", background: COLORS.bg, color: COLORS.ink, minHeight: "100%" }}
     >
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
@@ -335,10 +305,10 @@ function App() {
           100% { box-shadow: 0 0 0 0 rgba(47,168,102,0); }
         }
         .liveDot { animation: pulseDot 2s infinite; }
-        @media (max-width: 780px) {
-          .layout { grid-template-columns: 1fr !important; }
-          .sidebar { display: none !important; }
-          .sidebar.open { display: flex !important; position: fixed; z-index: 20; top:0; left:0; bottom:0; }
+        .toolbarBtn { transition: background 0.12s ease, border-color 0.12s ease; }
+        @media (max-width: 720px) {
+          .headerRow { flex-wrap: wrap; }
+          .toolbarActions { width: 100%; justify-content: flex-start !important; }
         }
         #print-area { display: none; }
         @media print {
@@ -349,236 +319,146 @@ function App() {
         }
       `}</style>
 
-      {/* row 1: title + date */}
-      <div
-        style={{
-          background: COLORS.brand,
-          color: "#fff",
-          padding: "14px 20px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-        }}
-      >
-        <div>
-          <div className="disp" style={{ fontWeight: 700, fontSize: 17, letterSpacing: 0.2 }}>
+      {/* header */}
+      <div style={{ background: COLORS.brand, color: "#fff", padding: "16px 28px" }}>
+        <div style={{ maxWidth: 1040, margin: "0 auto" }}>
+          <div className="disp" style={{ fontWeight: 700, fontSize: 19, letterSpacing: 0.2 }}>
             Laporan Harian Warehouse
           </div>
         </div>
-        <input
-          type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-          style={{
-            background: "rgba(255,255,255,0.95)",
-            border: "none",
-            borderRadius: 6,
-            padding: "7px 10px",
-            fontSize: 13,
-            color: COLORS.ink,
-            fontWeight: 600,
-          }}
-        />
       </div>
 
-      {/* row 2: action bar - QC1 / QC2 */}
-      <div
-        style={{
-          background: COLORS.surface,
-          borderBottom: `1px solid ${COLORS.line}`,
-          padding: "10px 20px",
-          display: "flex",
-          gap: 10,
-          overflowX: "auto",
-        }}
-      >
-        {Object.entries(STATUS_SETS).map(([key, cfg]) => (
-          <button
-            key={key}
-            onClick={() => setSection(key)}
-            style={{
-              padding: "9px 22px",
-              borderRadius: 10,
-              border: `1px solid ${section === key ? COLORS.brand : COLORS.line}`,
-              background: section === key ? COLORS.brand : "transparent",
-              color: section === key ? "#fff" : COLORS.ink,
-              cursor: "pointer",
-              minWidth: 110,
-            }}
-          >
-            <span className="disp" style={{ fontWeight: 700, fontSize: 13.5 }}>
-              {cfg.label}
-            </span>
-          </button>
-        ))}
-      </div>
-
-      <div className="layout" style={{ display: "grid", gridTemplateColumns: "220px 1fr", flex: 1, minHeight: 0 }}>
-        {/* sidebar: history */}
+      {/* toolbar: tabs + date + history + actions */}
+      <div style={{ background: COLORS.surface, borderBottom: `1px solid ${COLORS.line}`, position: "sticky", top: 0, zIndex: 10 }}>
         <div
-          className={`sidebar ${sidebarOpen ? "open" : ""}`}
-          style={{
-            background: COLORS.surface,
-            borderRight: `1px solid ${COLORS.line}`,
-            padding: "18px 14px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 10,
-            overflowY: "auto",
-          }}
+          className="headerRow"
+          style={{ maxWidth: 1040, margin: "0 auto", padding: "12px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}
         >
-          <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.inkSoft, letterSpacing: 0.6, textTransform: "uppercase" }}>
-            Riwayat Laporan
-          </div>
-          {savedDates.length === 0 && (
-            <div style={{ fontSize: 12.5, color: COLORS.inkSoft, lineHeight: 1.5 }}>
-              Belum ada laporan tersimpan. Isi data lalu tekan Simpan.
-            </div>
-          )}
-          {savedDates.map((d) => (
-            <button
-              key={d}
-              onClick={() => {
-                setDate(d);
-                setSidebarOpen(false);
-              }}
-              style={{
-                textAlign: "left",
-                background: d === date ? COLORS.lineSoft : "transparent",
-                border: `1px solid ${d === date ? COLORS.brand : "transparent"}`,
-                borderRadius: 8,
-                padding: "8px 10px",
-                cursor: "pointer",
-                fontSize: 12.5,
-                color: COLORS.ink,
-                fontWeight: d === date ? 700 : 500,
-              }}
-            >
-              {fmtDateLabel(d)}
-            </button>
-          ))}
-        </div>
-
-        {/* main content */}
-        <div style={{ padding: "22px 24px 60px", overflowY: "auto" }}>
-          {loading || !report ? (
-            <div style={{ padding: 40, color: COLORS.inkSoft }}>Memuat laporan…</div>
-          ) : (
-            <>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14, marginBottom: 18 }}>
-                <div>
-                  <h1 className="disp" style={{ fontSize: 22, fontWeight: 700, margin: 0, color: COLORS.brandDark }}>
-                    {STATUS_SETS[section].label}
-                  </h1>
-                  <div style={{ fontSize: 13, color: COLORS.inkSoft, marginTop: 3 }}>{fmtDateLabel(date)}</div>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button onClick={deleteReport} style={btnGhost}>
-                    Hapus
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (!date) {
-                        setError("Tanggal belum diisi/tidak valid. Pilih ulang tanggal di kanan atas.");
-                        return;
-                      }
-                      window.print();
-                    }}
-                    style={btnGhost}
-                  >
-                    Cetak / Ekspor PDF
-                  </button>
-                  <button onClick={saveReport} disabled={saving} style={btnPrimary}>
-                    {saving ? "Menyimpan…" : savedFlash ? "✓ Tersimpan" : "Simpan Laporan"}
-                  </button>
-                </div>
-              </div>
-
-              {error && (
-                <div style={{ background: "#FBEAE8", color: "#C8503F", padding: "8px 12px", borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
-                  {error}
-                </div>
-              )}
-
-              {/* summary cards, scoped to active QC section */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 24 }}>
-                <SummaryCard label="Total Unit" value={activeStats.total} color={COLORS.brandDark} />
-                {STATUS_SETS[section].options.map((opt) => (
-                  <SummaryCard key={opt.value} label={opt.value} value={activeStats.byStatus[opt.value] || 0} color={opt.color} dot dotColor={opt.color} />
-                ))}
-              </div>
-
-              {/* groups for active section */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-                {report[section].groups.map((g) => (
-                  <GroupBlock
-                    key={g.id}
-                    section={section}
-                    group={g}
-                    onUpdateGroup={(patch) => updateGroup(g.id, patch)}
-                    onRemoveGroup={() => removeGroup(g.id)}
-                    onAddUnit={() => addUnit(g.id)}
-                    onRemoveUnit={(unitId) => removeUnit(g.id, unitId)}
-                    onUpdateUnit={(unitId, patch) => updateUnit(g.id, unitId, patch)}
-                    onPhotoUpload={(unitId, file) => handlePhotoUpload(g.id, unitId, file)}
-                    onOpenLightbox={(src, label) => setLightbox({ src, label })}
-                    canRemoveGroup={report[section].groups.length > 1}
-                  />
-                ))}
-              </div>
-
-              <button onClick={addGroup} style={{ ...btnGhost, marginTop: 14, width: "100%", borderStyle: "dashed" }}>
-                + Tambah Kelompok Event / Lokasi
+          <div style={{ display: "flex", gap: 8 }}>
+            {Object.entries(STATUS_SETS).map(([key, cfg]) => (
+              <button
+                key={key}
+                onClick={() => setSection(key)}
+                className="toolbarBtn"
+                style={{
+                  padding: "8px 20px",
+                  borderRadius: 8,
+                  border: `1px solid ${section === key ? COLORS.brand : COLORS.line}`,
+                  background: section === key ? COLORS.brand : "transparent",
+                  color: section === key ? "#fff" : COLORS.ink,
+                  cursor: "pointer",
+                  fontWeight: 700,
+                  fontSize: 13.5,
+                }}
+              >
+                {cfg.label}
               </button>
+            ))}
+          </div>
 
-              <div style={{ marginTop: 26 }}>
-                <label style={{ fontSize: 12, fontWeight: 700, color: COLORS.inkSoft, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                  Catatan Tambahan
-                </label>
-                <textarea
-                  value={report.note}
-                  onChange={(e) => setReport((r) => ({ ...r, note: e.target.value }))}
-                  placeholder="Catatan QC, kendala, atau info lain untuk laporan hari ini…"
-                  rows={3}
-                  style={{
-                    width: "100%",
-                    marginTop: 6,
-                    padding: "10px 12px",
-                    borderRadius: 8,
-                    border: `1px solid ${COLORS.line}`,
-                    fontSize: 13.5,
-                    resize: "vertical",
-                    background: COLORS.surface,
-                  }}
-                />
-              </div>
-            </>
-          )}
+          <div className="toolbarActions" style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              style={{ border: `1px solid ${COLORS.line}`, borderRadius: 8, padding: "7px 10px", fontSize: 13, fontWeight: 600, color: COLORS.ink }}
+            />
+            <HistoryMenu savedDates={savedDates} currentDate={date} onSelect={setDate} fmtDateLabel={fmtDateLabel} />
+            <div style={{ width: 1, height: 24, background: COLORS.line, margin: "0 4px" }} />
+            <button onClick={deleteReport} style={btnGhost}>
+              Hapus
+            </button>
+            <button
+              onClick={() => {
+                if (!date) {
+                  setError("Tanggal belum diisi/tidak valid.");
+                  return;
+                }
+                window.print();
+              }}
+              style={btnGhost}
+            >
+              Cetak / PDF
+            </button>
+            <button onClick={saveReport} disabled={saving} style={btnPrimary}>
+              {saving ? "Menyimpan…" : savedFlash ? "✓ Tersimpan" : "Simpan Laporan"}
+            </button>
+          </div>
         </div>
+      </div>
+
+      {/* main */}
+      <div style={{ maxWidth: 1040, margin: "0 auto", padding: "26px 28px 70px" }}>
+        {loading || !report ? (
+          <div style={{ padding: 60, textAlign: "center", color: COLORS.inkSoft }}>Memuat laporan…</div>
+        ) : (
+          <>
+            <div style={{ marginBottom: 20 }}>
+              <h1 className="disp" style={{ fontSize: 21, fontWeight: 700, margin: 0, color: COLORS.brandDark }}>
+                {STATUS_SETS[section].label}
+              </h1>
+              <div style={{ fontSize: 13, color: COLORS.inkSoft, marginTop: 3 }}>{fmtDateLabel(date)}</div>
+            </div>
+
+            {error && (
+              <div style={{ background: "#FBEAE8", color: "#C8503F", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 16 }}>
+                {error}
+              </div>
+            )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 26 }}>
+              <SummaryCard label="Total Unit" value={activeStats.total} color={COLORS.brandDark} />
+              {STATUS_SETS[section].options.map((opt) => (
+                <SummaryCard key={opt.value} label={opt.value} value={activeStats.byStatus[opt.value] || 0} color={opt.color} dot dotColor={opt.color} />
+              ))}
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {report[section].groups.map((g) => (
+                <GroupBlock
+                  key={g.id}
+                  section={section}
+                  group={g}
+                  onUpdateGroup={(patch) => updateGroup(g.id, patch)}
+                  onRemoveGroup={() => removeGroup(g.id)}
+                  onAddUnit={() => addUnit(g.id)}
+                  onRemoveUnit={(unitId) => removeUnit(g.id, unitId)}
+                  onUpdateUnit={(unitId, patch) => updateUnit(g.id, unitId, patch)}
+                  onPhotoUpload={(unitId, file) => handlePhotoUpload(g.id, unitId, file)}
+                  onOpenLightbox={(src, label) => setLightbox({ src, label })}
+                  canRemoveGroup={report[section].groups.length > 1}
+                />
+              ))}
+            </div>
+
+            <button onClick={addGroup} style={{ ...btnGhost, marginTop: 14, width: "100%", borderStyle: "dashed", padding: "12px" }}>
+              + Tambah Kelompok Event / Lokasi
+            </button>
+
+            <div style={{ marginTop: 28 }}>
+              <label style={{ fontSize: 12, fontWeight: 700, color: COLORS.inkSoft, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                Catatan Tambahan
+              </label>
+              <textarea
+                value={report.note}
+                onChange={(e) => setReport((r) => ({ ...r, note: e.target.value }))}
+                placeholder="Catatan QC, kendala, atau info lain untuk laporan hari ini…"
+                rows={3}
+                style={{ width: "100%", marginTop: 6, padding: "10px 12px", borderRadius: 8, border: `1px solid ${COLORS.line}`, fontSize: 13.5, resize: "vertical", background: COLORS.surface }}
+              />
+            </div>
+          </>
+        )}
       </div>
 
       {lightbox && (
         <div
           onClick={() => setLightbox(null)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(10,20,14,0.82)",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 50,
-            padding: 24,
-          }}
+          style={{ position: "fixed", inset: 0, background: "rgba(10,20,14,0.82)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 24 }}
         >
           <img src={lightbox.src} alt={lightbox.label} style={{ maxWidth: "92vw", maxHeight: "80vh", borderRadius: 10, boxShadow: "0 8px 40px rgba(0,0,0,0.4)" }} />
           <div style={{ color: "#fff", marginTop: 12, fontSize: 13.5, fontWeight: 600 }}>{lightbox.label}</div>
-          <button
-            onClick={() => setLightbox(null)}
-            style={{ marginTop: 14, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.3)", color: "#fff", borderRadius: 8, padding: "7px 16px", fontSize: 13, cursor: "pointer" }}
-          >
+          <button onClick={() => setLightbox(null)} style={{ marginTop: 14, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.3)", color: "#fff", borderRadius: 8, padding: "7px 16px", fontSize: 13, cursor: "pointer" }}>
             Tutup
           </button>
         </div>
@@ -589,125 +469,91 @@ function App() {
   );
 }
 
-// Print-only view: renders the FULL report (QC1 + QC2 + photos) regardless of
-// which tab is active on screen. Hidden by default, shown via @media print
-// when the "Cetak / Ekspor PDF" button calls window.print().
-function PrintReport({ report, date, fmtDateLabel }) {
-  return (
-    <div id="print-area">
-      <div style={{ borderBottom: `3px solid ${COLORS.brand}`, paddingBottom: 10, marginBottom: 16 }}>
-        <div className="disp" style={{ fontSize: 20, fontWeight: 700, color: COLORS.brandDark }}>
-          Laporan Harian Warehouse
-        </div>
-        <div style={{ fontSize: 12.5, color: COLORS.inkSoft, marginTop: 2 }}>{fmtDateLabel(date)}</div>
-      </div>
+// History is stored continuously in the background (every save registers its
+// date), but stays out of view until the person actively opens this menu —
+// keeps the toolbar clean instead of a permanent sidebar.
+function HistoryMenu({ savedDates, currentDate, onSelect, fmtDateLabel }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
 
-      {Object.keys(STATUS_SETS).map((sec) => (
-        <PrintSection key={sec} sectionKey={sec} data={report[sec]} />
-      ))}
-
-      {report.note && report.note.trim() && (
-        <div style={{ marginTop: 10, pageBreakInside: "avoid" }}>
-          <div className="disp" style={{ fontSize: 13, fontWeight: 700, color: COLORS.brandDark, marginBottom: 4 }}>
-            Catatan Tambahan
-          </div>
-          <div style={{ fontSize: 12, color: COLORS.ink, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{report.note}</div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PrintSection({ sectionKey, data }) {
-  const cfg = STATUS_SETS[sectionKey];
-  const opts = cfg.options;
-  const allUnits = [];
-  data.groups.forEach((g) => g.units.forEach((u) => { if (u.name || u.terminalId) allUnits.push({ ...u, groupName: g.name }); }));
-  const counts = opts.map((o) => ({ ...o, count: allUnits.filter((u) => u.status === o.value).length }));
-  const withPhoto = allUnits.filter((u) => u.photo);
+  useEffect(() => {
+    function onDocClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
 
   return (
-    <div style={{ marginBottom: 22, pageBreakInside: "auto" }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6 }}>
-        <div className="disp" style={{ fontSize: 15, fontWeight: 700, color: COLORS.brandDark }}>
-          {cfg.label}
-        </div>
-        <div style={{ fontSize: 11, color: COLORS.inkSoft }}>
-          {counts.map((c) => `${c.value}: ${c.count}`).join("  ·  ")}
-        </div>
-      </div>
-
-      {data.groups.map((g) => {
-        const units = g.units.filter((u) => u.name || u.terminalId);
-        if (units.length === 0) return null;
-        return (
-          <div key={g.id} style={{ marginBottom: 12, pageBreakInside: "avoid" }}>
-            <div style={{ fontSize: 12.5, fontWeight: 700, color: COLORS.ink, margin: "8px 0 4px" }}>
-              {g.name || "Tanpa nama kelompok"}
-              <span style={{ fontWeight: 500, color: COLORS.inkSoft, fontSize: 11 }}> — {g.category || "Event"}</span>
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{ ...btnGhost, display: "flex", alignItems: "center", gap: 6 }}
+      >
+        Riwayat
+        {savedDates.length > 0 && (
+          <span style={{ background: COLORS.lineSoft, color: COLORS.inkSoft, borderRadius: 20, fontSize: 11, padding: "1px 7px", fontWeight: 700 }}>
+            {savedDates.length}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            right: 0,
+            top: "calc(100% + 6px)",
+            width: 240,
+            maxHeight: 320,
+            overflowY: "auto",
+            background: COLORS.surface,
+            border: `1px solid ${COLORS.line}`,
+            borderRadius: 10,
+            boxShadow: "0 10px 30px rgba(15,53,33,0.14)",
+            padding: 8,
+            zIndex: 30,
+          }}
+        >
+          {savedDates.length === 0 ? (
+            <div style={{ padding: "10px 8px", fontSize: 12.5, color: COLORS.inkSoft, lineHeight: 1.5 }}>
+              Belum ada laporan tersimpan.
             </div>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
-              <thead>
-                <tr style={{ background: COLORS.lineSoft }}>
-                  <th style={printTh}>No.</th>
-                  <th style={printTh}>Location Name</th>
-                  <th style={printTh}>Terminal ID</th>
-                  <th style={printTh}>Simcard</th>
-                  <th style={printTh}>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {units.map((u, i) => {
-                  const o = opts.find((x) => x.value === u.status) || opts[0];
-                  return (
-                    <tr key={u.id}>
-                      <td style={printTd}>{i + 1}</td>
-                      <td style={printTd}>{u.name}</td>
-                      <td style={{ ...printTd, fontFamily: "'IBM Plex Mono', monospace" }}>{u.terminalId}</td>
-                      <td style={{ ...printTd, fontFamily: "'IBM Plex Mono', monospace" }}>{u.simcard}</td>
-                      <td style={{ ...printTd, fontWeight: 700, color: o.color }}>{u.status}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        );
-      })}
-
-      {withPhoto.length > 0 && (
-        <div style={{ marginTop: 8 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.ink, marginBottom: 6 }}>
-            Lampiran Foto — {cfg.label} ({withPhoto.length} unit)
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
-            {withPhoto.map((u) => (
-              <div key={u.id} style={{ pageBreakInside: "avoid", textAlign: "center" }}>
-                <img
-                  src={u.photo}
-                  alt={u.name || u.terminalId}
-                  style={{ width: "100%", height: 90, objectFit: "cover", borderRadius: 6, border: `1px solid ${COLORS.line}` }}
-                />
-                <div style={{ fontSize: 9.5, fontWeight: 700, marginTop: 3, color: COLORS.ink }}>{u.name || "—"}</div>
-                <div style={{ fontSize: 8.5, color: COLORS.inkSoft, fontFamily: "'IBM Plex Mono', monospace" }}>{u.terminalId}</div>
-              </div>
-            ))}
-          </div>
+          ) : (
+            savedDates.map((d) => (
+              <button
+                key={d}
+                onClick={() => {
+                  onSelect(d);
+                  setOpen(false);
+                }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left",
+                  background: d === currentDate ? COLORS.lineSoft : "transparent",
+                  border: "none",
+                  borderRadius: 6,
+                  padding: "8px 10px",
+                  cursor: "pointer",
+                  fontSize: 12.5,
+                  color: COLORS.ink,
+                  fontWeight: d === currentDate ? 700 : 500,
+                }}
+              >
+                {fmtDateLabel(d)}
+              </button>
+            ))
+          )}
         </div>
       )}
     </div>
   );
 }
-
-const printTh = { textAlign: "left", padding: "5px 7px", border: `1px solid ${COLORS.line}`, fontWeight: 700, color: COLORS.inkSoft, fontSize: 10, textTransform: "uppercase" };
-const printTd = { padding: "5px 7px", border: `1px solid ${COLORS.line}` };
 
 function SummaryCard({ label, value, color, dot, dotColor }) {
   return (
     <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 10, padding: "14px 16px" }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.inkSoft, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
-        {label}
-      </div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.inkSoft, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>{label}</div>
       <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
         {dot && <span className="liveDot" style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />}
         <span className="disp" style={{ fontSize: 22, fontWeight: 700, color }}>
@@ -724,16 +570,7 @@ function GroupBlock({ section, group, onUpdateGroup, onRemoveGroup, onAddUnit, o
 
   return (
     <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 12, overflow: "hidden" }}>
-      <div
-        style={{
-          background: COLORS.lineSoft,
-          padding: "10px 14px",
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          borderBottom: `1px solid ${COLORS.line}`,
-        }}
-      >
+      <div style={{ background: COLORS.lineSoft, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${COLORS.line}` }}>
         <input
           value={group.name}
           onChange={(e) => onUpdateGroup({ name: e.target.value })}
@@ -744,16 +581,7 @@ function GroupBlock({ section, group, onUpdateGroup, onRemoveGroup, onAddUnit, o
         <select
           value={group.category || "Event"}
           onChange={(e) => onUpdateGroup({ category: e.target.value })}
-          style={{
-            border: `1px solid ${COLORS.line}`,
-            background: COLORS.surface,
-            color: COLORS.ink,
-            borderRadius: 20,
-            padding: "4px 10px",
-            fontSize: 11.5,
-            fontWeight: 700,
-            cursor: "pointer",
-          }}
+          style={{ border: `1px solid ${COLORS.line}`, background: COLORS.surface, color: COLORS.ink, borderRadius: 20, padding: "4px 10px", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}
         >
           {CATEGORY_OPTIONS.map((c) => (
             <option key={c} value={c}>
@@ -800,37 +628,16 @@ function GroupBlock({ section, group, onUpdateGroup, onRemoveGroup, onAddUnit, o
                     <input value={u.name} onChange={(e) => onUpdateUnit(u.id, { name: e.target.value })} placeholder="RI Fest-1" style={cellInput} />
                   </td>
                   <td style={td}>
-                    <input
-                      value={u.terminalId}
-                      onChange={(e) => onUpdateUnit(u.id, { terminalId: e.target.value })}
-                      placeholder="nas_0072010800000560"
-                      className="mono"
-                      style={{ ...cellInput, fontSize: 12.5 }}
-                    />
+                    <input value={u.terminalId} onChange={(e) => onUpdateUnit(u.id, { terminalId: e.target.value })} placeholder="nas_0072010800000560" className="mono" style={{ ...cellInput, fontSize: 12.5 }} />
                   </td>
                   <td style={td}>
-                    <input
-                      value={u.simcard}
-                      onChange={(e) => onUpdateUnit(u.id, { simcard: e.target.value })}
-                      placeholder="081413965862"
-                      className="mono"
-                      style={{ ...cellInput, fontSize: 12.5 }}
-                    />
+                    <input value={u.simcard} onChange={(e) => onUpdateUnit(u.id, { simcard: e.target.value })} placeholder="081413965862" className="mono" style={{ ...cellInput, fontSize: 12.5 }} />
                   </td>
                   <td style={td}>
                     <select
                       value={u.status}
                       onChange={(e) => onUpdateUnit(u.id, { status: e.target.value })}
-                      style={{
-                        border: `1px solid ${cfg.border}`,
-                        background: cfg.bg,
-                        color: cfg.color,
-                        borderRadius: 20,
-                        padding: "5px 10px",
-                        fontSize: 12,
-                        fontWeight: 700,
-                        cursor: "pointer",
-                      }}
+                      style={{ border: `1px solid ${cfg.border}`, background: cfg.bg, color: cfg.color, borderRadius: 20, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
                     >
                       {opts.map((o) => (
                         <option key={o.value} value={o.value}>
@@ -862,24 +669,10 @@ function GroupBlock({ section, group, onUpdateGroup, onRemoveGroup, onAddUnit, o
 
 function PhotoCell({ unit, onUpload, onRemove, onView }) {
   const inputRef = useRef(null);
-
   if (unit.photo) {
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-        <button
-          onClick={onView}
-          style={{
-            width: 40,
-            height: 40,
-            borderRadius: 8,
-            overflow: "hidden",
-            border: `1px solid ${COLORS.line}`,
-            padding: 0,
-            cursor: "pointer",
-            flexShrink: 0,
-          }}
-          aria-label="Lihat foto"
-        >
+        <button onClick={onView} style={{ width: 40, height: 40, borderRadius: 8, overflow: "hidden", border: `1px solid ${COLORS.line}`, padding: 0, cursor: "pointer", flexShrink: 0 }} aria-label="Lihat foto">
           <img src={unit.photo} alt="Bukti QC" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
         </button>
         <button onClick={onRemove} style={{ ...btnIcon, fontSize: 11 }} aria-label="Hapus foto">
@@ -888,24 +681,11 @@ function PhotoCell({ unit, onUpload, onRemove, onView }) {
       </div>
     );
   }
-
   return (
     <>
       <button
         onClick={() => inputRef.current && inputRef.current.click()}
-        style={{
-          width: 40,
-          height: 40,
-          borderRadius: 8,
-          border: `1px dashed ${COLORS.line}`,
-          background: COLORS.lineSoft,
-          color: COLORS.inkSoft,
-          fontSize: 16,
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
+        style={{ width: 40, height: 40, borderRadius: 8, border: `1px dashed ${COLORS.line}`, background: COLORS.lineSoft, color: COLORS.inkSoft, fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
         aria-label="Unggah foto"
         title="Unggah foto bukti QC"
       >
@@ -926,6 +706,107 @@ function PhotoCell({ unit, onUpload, onRemove, onView }) {
   );
 }
 
+// Print-only view: renders the FULL report (QC1 + QC2 + photos) regardless of
+// which tab is active on screen.
+function PrintReport({ report, date, fmtDateLabel }) {
+  return (
+    <div id="print-area">
+      <div style={{ borderBottom: `3px solid ${COLORS.brand}`, paddingBottom: 10, marginBottom: 16 }}>
+        <div className="disp" style={{ fontSize: 20, fontWeight: 700, color: COLORS.brandDark }}>
+          Laporan Harian Warehouse
+        </div>
+        <div style={{ fontSize: 12.5, color: COLORS.inkSoft, marginTop: 2 }}>{fmtDateLabel(date)}</div>
+      </div>
+      {Object.keys(STATUS_SETS).map((sec) => (
+        <PrintSection key={sec} sectionKey={sec} data={report[sec]} />
+      ))}
+      {report.note && report.note.trim() && (
+        <div style={{ marginTop: 10, pageBreakInside: "avoid" }}>
+          <div className="disp" style={{ fontSize: 13, fontWeight: 700, color: COLORS.brandDark, marginBottom: 4 }}>
+            Catatan Tambahan
+          </div>
+          <div style={{ fontSize: 12, color: COLORS.ink, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{report.note}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PrintSection({ sectionKey, data }) {
+  const cfg = STATUS_SETS[sectionKey];
+  const opts = cfg.options;
+  const allUnits = [];
+  data.groups.forEach((g) => g.units.forEach((u) => { if (u.name || u.terminalId) allUnits.push({ ...u, groupName: g.name }); }));
+  const counts = opts.map((o) => ({ ...o, count: allUnits.filter((u) => u.status === o.value).length }));
+  const withPhoto = allUnits.filter((u) => u.photo);
+
+  return (
+    <div style={{ marginBottom: 22, pageBreakInside: "auto" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6 }}>
+        <div className="disp" style={{ fontSize: 15, fontWeight: 700, color: COLORS.brandDark }}>
+          {cfg.label}
+        </div>
+        <div style={{ fontSize: 11, color: COLORS.inkSoft }}>{counts.map((c) => `${c.value}: ${c.count}`).join("  ·  ")}</div>
+      </div>
+      {data.groups.map((g) => {
+        const units = g.units.filter((u) => u.name || u.terminalId);
+        if (units.length === 0) return null;
+        return (
+          <div key={g.id} style={{ marginBottom: 12, pageBreakInside: "avoid" }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: COLORS.ink, margin: "8px 0 4px" }}>
+              {g.name || "Tanpa nama kelompok"}
+              <span style={{ fontWeight: 500, color: COLORS.inkSoft, fontSize: 11 }}> — {g.category || "Event"}</span>
+            </div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+              <thead>
+                <tr style={{ background: COLORS.lineSoft }}>
+                  <th style={printTh}>No.</th>
+                  <th style={printTh}>Location Name</th>
+                  <th style={printTh}>Terminal ID</th>
+                  <th style={printTh}>Simcard</th>
+                  <th style={printTh}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {units.map((u, i) => {
+                  const o = opts.find((x) => x.value === u.status) || opts[0];
+                  return (
+                    <tr key={u.id}>
+                      <td style={printTd}>{i + 1}</td>
+                      <td style={printTd}>{u.name}</td>
+                      <td style={{ ...printTd, fontFamily: "'IBM Plex Mono', monospace" }}>{u.terminalId}</td>
+                      <td style={{ ...printTd, fontFamily: "'IBM Plex Mono', monospace" }}>{u.simcard}</td>
+                      <td style={{ ...printTd, fontWeight: 700, color: o.color }}>{u.status}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+      {withPhoto.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.ink, marginBottom: 6 }}>
+            Lampiran Foto — {cfg.label} ({withPhoto.length} unit)
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+            {withPhoto.map((u) => (
+              <div key={u.id} style={{ pageBreakInside: "avoid", textAlign: "center" }}>
+                <img src={u.photo} alt={u.name || u.terminalId} style={{ width: "100%", height: 90, objectFit: "cover", borderRadius: 6, border: `1px solid ${COLORS.line}` }} />
+                <div style={{ fontSize: 9.5, fontWeight: 700, marginTop: 3, color: COLORS.ink }}>{u.name || "—"}</div>
+                <div style={{ fontSize: 8.5, color: COLORS.inkSoft, fontFamily: "'IBM Plex Mono', monospace" }}>{u.terminalId}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const printTh = { textAlign: "left", padding: "5px 7px", border: `1px solid ${COLORS.line}`, fontWeight: 700, color: COLORS.inkSoft, fontSize: 10, textTransform: "uppercase" };
+const printTd = { padding: "5px 7px", border: `1px solid ${COLORS.line}` };
 const th = { padding: "8px 12px" };
 const td = { padding: "6px 12px", verticalAlign: "middle" };
 const cellInput = { width: "100%", border: "none", background: "transparent", fontSize: 13, padding: "6px 4px", borderRadius: 6, color: COLORS.ink };
