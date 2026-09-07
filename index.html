@@ -1,4 +1,36 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Laporan Harian Warehouse</title>
+<link rel="icon" href="data:," />
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<style>
+  html, body, #root { height: 100%; margin: 0; }
+  body { background: #F3F4EF; font-family: system-ui, sans-serif; }
+  #boot-error { display:none; padding:20px; color:#7a1f1f; background:#fdecea; border:1px solid #f3b7b0; border-radius:8px; margin:20px; white-space:pre-wrap; font-size:13px; line-height:1.5; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div style="padding:24px; color:#57685C; font-size:14px;">Memuat dashboard…</div>
+</div>
+<div id="boot-error"></div>
+
+<script>
+  window.addEventListener('error', function (e) {
+    var box = document.getElementById('boot-error');
+    box.style.display = 'block';
+    box.textContent = 'Terjadi error saat memuat dashboard:\n' + (e.message || e.error) +
+      (e.filename ? '\n\nFile: ' + e.filename + ':' + e.lineno : '');
+  });
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
 // ---------- design tokens ----------
 const COLORS = {
@@ -81,7 +113,7 @@ function compressImage(file, maxWidth = 480, quality = 0.62) {
   });
 }
 
-export default function App() {
+function App() {
   const [date, setDate] = useState(todayStr());
   const [report, setReport] = useState(null);
   const [section, setSection] = useState("qc1");
@@ -808,3 +840,9 @@ const cellInput = { width: "100%", border: "none", background: "transparent", fo
 const btnPrimary = { background: COLORS.brand, color: "#fff", border: "none", borderRadius: 8, padding: "9px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer" };
 const btnGhost = { background: "transparent", color: COLORS.brand, border: `1px solid ${COLORS.line}`, borderRadius: 8, padding: "9px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
 const btnIcon = { background: "transparent", border: "none", color: COLORS.inkSoft, cursor: "pointer", fontSize: 13, padding: "4px 6px", borderRadius: 6 };
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>
