@@ -1,36 +1,4 @@
-<!DOCTYPE html>
-<html lang="id">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Laporan Harian Warehouse</title>
-<link rel="icon" href="data:," />
-<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
-<style>
-  html, body, #root { height: 100%; margin: 0; }
-  body { background: #F3F4EF; font-family: system-ui, sans-serif; }
-  #boot-error { display:none; padding:20px; color:#7a1f1f; background:#fdecea; border:1px solid #f3b7b0; border-radius:8px; margin:20px; white-space:pre-wrap; font-size:13px; line-height:1.5; }
-</style>
-</head>
-<body>
-<div id="root">
-  <div style="padding:24px; color:#57685C; font-size:14px;">Memuat dashboard…</div>
-</div>
-<div id="boot-error"></div>
-
-<script>
-  window.addEventListener('error', function (e) {
-    var box = document.getElementById('boot-error');
-    box.style.display = 'block';
-    box.textContent = 'Terjadi error saat memuat dashboard:\n' + (e.message || e.error) +
-      (e.filename ? '\n\nFile: ' + e.filename + ':' + e.lineno : '');
-  });
-</script>
-
-<script type="text/babel" data-presets="react">
-const { useState, useEffect, useMemo, useCallback, useRef } = React;
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 
 // ---------- design tokens ----------
 const COLORS = {
@@ -113,7 +81,7 @@ function compressImage(file, maxWidth = 480, quality = 0.62) {
   });
 }
 
-function App() {
+export default function App() {
   const [date, setDate] = useState(todayStr());
   const [report, setReport] = useState(null);
   const [section, setSection] = useState("qc1");
@@ -123,6 +91,27 @@ function App() {
   const [savedFlash, setSavedFlash] = useState(false);
   const [error, setError] = useState("");
   const [lightbox, setLightbox] = useState(null);
+  const [storageInfo, setStorageInfo] = useState({ mb: 0, pct: 0 });
+
+  // rough estimate of how much of the browser's ~5MB localStorage budget
+  // our report data is using, so the person gets a warning before a save
+  // ever fails due to a full quota
+  const ASSUMED_QUOTA_MB = 5;
+  const measureStorage = useCallback(() => {
+    try {
+      let bytes = 0;
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(STORAGE_PREFIX)) {
+          bytes += (localStorage.getItem(key) || "").length;
+        }
+      }
+      const mb = bytes / (1024 * 1024);
+      setStorageInfo({ mb, pct: Math.min(100, Math.round((mb / ASSUMED_QUOTA_MB) * 100)) });
+    } catch (e) {
+      // ignore — purely informational
+    }
+  }, []);
 
   const loadDates = useCallback(() => {
     try {
@@ -162,7 +151,8 @@ function App() {
 
   useEffect(() => {
     loadDates();
-  }, [loadDates]);
+    measureStorage();
+  }, [loadDates, measureStorage]);
   useEffect(() => {
     loadReport(date);
   }, [date, loadReport]);
@@ -180,8 +170,9 @@ function App() {
       setSavedFlash(true);
       setTimeout(() => setSavedFlash(false), 1800);
       loadDates();
+      measureStorage();
     } catch (e) {
-      setError("Gagal menyimpan. Kemungkinan penyimpanan browser penuh — coba kurangi jumlah/ukuran foto.");
+      setError("Gagal menyimpan — penyimpanan browser kemungkinan penuh. Hapus laporan lama atau kurangi jumlah/ukuran foto, lalu coba lagi.");
     } finally {
       setSaving(false);
     }
@@ -192,6 +183,7 @@ function App() {
     try {
       localStorage.removeItem(STORAGE_PREFIX + date);
       loadDates();
+      measureStorage();
       setReport(defaultReport(date));
     } catch (e) {
       setError("Gagal menghapus.");
@@ -342,6 +334,7 @@ function App() {
               style={{ border: `1px solid ${COLORS.line}`, borderRadius: 8, padding: "7px 10px", fontSize: 13, fontWeight: 600, color: COLORS.ink }}
             />
             <HistoryMenu savedDates={savedDates} currentDate={date} onSelect={setDate} fmtDateLabel={fmtDateLabel} />
+            <StorageBadge info={storageInfo} />
             <div style={{ width: 1, height: 24, background: COLORS.line, margin: "0 4px" }} />
             <button onClick={deleteReport} style={btnGhost}>
               Hapus
@@ -381,6 +374,13 @@ function App() {
             {error && (
               <div style={{ background: "#FBEAE8", color: "#C8503F", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 16 }}>
                 {error}
+              </div>
+            )}
+
+            {storageInfo.pct >= 70 && (
+              <div style={{ background: storageInfo.pct >= 90 ? "#FBEAE8" : "#FBF3DE", color: storageInfo.pct >= 90 ? "#C8503F" : "#8A6A10", padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 16 }}>
+                Penyimpanan browser untuk laporan sudah terpakai ~{storageInfo.mb.toFixed(1)} MB ({storageInfo.pct}%).
+                {storageInfo.pct >= 90 ? " Hampir penuh — " : " "}Ekspor laporan lama ke PDF lalu hapus dari sini, atau kurangi jumlah/ukuran foto, supaya tidak gagal menyimpan.
               </div>
             )}
 
@@ -450,6 +450,23 @@ function App() {
 // History is stored continuously in the background (every save registers its
 // date), but stays out of view until the person actively opens this menu —
 // keeps the toolbar clean instead of a permanent sidebar.
+// Small always-visible indicator of how much of the browser's local storage
+// budget our saved reports are using, so a full quota is never a surprise.
+function StorageBadge({ info }) {
+  const isWarning = info.pct >= 70;
+  const isCritical = info.pct >= 90;
+  const color = isCritical ? "#C8503F" : isWarning ? "#B8860B" : COLORS.inkFaint;
+  return (
+    <div
+      title="Perkiraan pemakaian penyimpanan browser untuk laporan tersimpan"
+      style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color, fontWeight: isWarning ? 700 : 500, padding: "0 4px" }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: color, flexShrink: 0 }} />
+      {info.mb < 0.05 ? "<0.1" : info.mb.toFixed(1)} MB
+    </div>
+  );
+}
+
 function HistoryMenu({ savedDates, currentDate, onSelect, fmtDateLabel }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -791,9 +808,3 @@ const cellInput = { width: "100%", border: "none", background: "transparent", fo
 const btnPrimary = { background: COLORS.brand, color: "#fff", border: "none", borderRadius: 8, padding: "9px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer" };
 const btnGhost = { background: "transparent", color: COLORS.brand, border: `1px solid ${COLORS.line}`, borderRadius: 8, padding: "9px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
 const btnIcon = { background: "transparent", border: "none", color: COLORS.inkSoft, cursor: "pointer", fontSize: 13, padding: "4px 6px", borderRadius: 6 };
-
-const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(<App />);
-</script>
-</body>
-</html>
