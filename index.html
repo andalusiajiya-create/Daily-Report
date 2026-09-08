@@ -90,8 +90,33 @@ function emptyGroup(section, name = "Kelompok Baru") {
 function defaultSection(section) {
   return { groups: [emptyGroup(section)] };
 }
+// free-form entries for non-machine items (simcards, standing banners, etc.)
+// where a fixed category/status doesn't really apply — just title,
+// description, and photo evidence
+function emptyOtherEntry() {
+  return { id: uid(), title: "", description: "", photo: null };
+}
+function defaultOtherSection() {
+  return { entries: [emptyOtherEntry()] };
+}
 function defaultReport(date) {
-  return { date, qc1: defaultSection("qc1"), qc2: defaultSection("qc2"), note: "" };
+  return { date, qc1: defaultSection("qc1"), qc2: defaultSection("qc2"), other: defaultOtherSection(), note: "" };
+}
+
+// parses pasted multi-line text into multiple units at once, so a whole
+// batch can be added in one paste instead of typing each row by hand.
+// Accepts tab-separated (pasted from Excel/Sheets) or comma-separated lines:
+// "Location Name, Terminal ID, Simcard" — trailing fields are optional.
+function parseBulkUnits(text, section) {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.includes("\t") ? line.split("\t") : line.split(",");
+      const [name = "", terminalId = "", simcard = ""] = parts.map((p) => p.trim());
+      return { ...emptyUnit(section), name, terminalId, simcard };
+    });
 }
 
 // compress an uploaded image client-side so it stays small in storage
@@ -175,6 +200,7 @@ function App() {
         const parsed = JSON.parse(raw);
         if (!parsed.qc1 || parsed.qc1.groups.length === 0) parsed.qc1 = defaultSection("qc1");
         if (!parsed.qc2 || parsed.qc2.groups.length === 0) parsed.qc2 = defaultSection("qc2");
+        if (!parsed.other || parsed.other.entries.length === 0) parsed.other = defaultOtherSection();
         setReport(parsed);
       } else {
         setReport(defaultReport(d));
@@ -251,6 +277,19 @@ function App() {
       ...r,
       [section]: { groups: r[section].groups.map((g) => (g.id === gid ? { ...g, units: g.units.filter((u) => u.id !== unitId) } : g)) },
     }));
+  // adds many units from a bulk paste at once; drops any still-blank default
+  // row first so pasting into a fresh group doesn't leave an empty line
+  const bulkAddUnits = (gid, newUnits) =>
+    setReport((r) => ({
+      ...r,
+      [section]: {
+        groups: r[section].groups.map((g) => {
+          if (g.id !== gid) return g;
+          const kept = g.units.filter((u) => u.name || u.terminalId);
+          return { ...g, units: [...kept, ...newUnits] };
+        }),
+      },
+    }));
 
   const handlePhotoUpload = async (gid, unitId, file) => {
     if (!file) return;
@@ -267,9 +306,29 @@ function App() {
     }
   };
 
+  // ---- 'other' (non-machine) section: flat list, no groups/status ----
+  const updateOtherEntry = (id, patch) =>
+    setReport((r) => ({ ...r, other: { entries: r.other.entries.map((it) => (it.id === id ? { ...it, ...patch } : it)) } }));
+  const addOtherEntry = () => setReport((r) => ({ ...r, other: { entries: [...r.other.entries, emptyOtherEntry()] } }));
+  const removeOtherEntry = (id) => setReport((r) => ({ ...r, other: { entries: r.other.entries.filter((it) => it.id !== id) } }));
+  const handleOtherPhotoUpload = async (id, file) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setError("File harus berupa gambar.");
+      return;
+    }
+    try {
+      const dataUrl = await compressImage(file);
+      updateOtherEntry(id, { photo: dataUrl });
+      setError("");
+    } catch (e) {
+      setError("Gagal memproses foto.");
+    }
+  };
+
   const statsFor = useCallback(
     (sec) => {
-      if (!report) return { total: 0, byStatus: {} };
+      if (!report || !STATUS_SETS[sec]) return { total: 0, byStatus: {} };
       const opts = STATUS_SETS[sec].options.map((o) => o.value);
       const byStatus = Object.fromEntries(opts.map((o) => [o, 0]));
       let total = 0;
@@ -418,6 +477,22 @@ function App() {
                 {cfg.label}
               </button>
             ))}
+            <button
+              onClick={() => setSection("other")}
+              className="toolbarBtn"
+              style={{
+                padding: "8px 20px",
+                borderRadius: 8,
+                border: `1px solid ${section === "other" ? COLORS.brand : COLORS.line}`,
+                background: section === "other" ? COLORS.brand : "transparent",
+                color: section === "other" ? "#fff" : COLORS.ink,
+                cursor: "pointer",
+                fontWeight: 700,
+                fontSize: 13.5,
+              }}
+            >
+              Lainnya
+            </button>
           </div>
 
           <div className="toolbarActions" style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
@@ -460,7 +535,7 @@ function App() {
           <>
             <div style={{ marginBottom: 20 }}>
               <h1 className="disp" style={{ fontSize: 21, fontWeight: 700, margin: 0, color: COLORS.brandDark }}>
-                {STATUS_SETS[section].label}
+                {section === "other" ? "Lainnya" : STATUS_SETS[section].label}
               </h1>
               <div style={{ fontSize: 13, color: COLORS.inkSoft, marginTop: 3 }}>{fmtDateLabel(date)}</div>
             </div>
@@ -478,34 +553,63 @@ function App() {
               </div>
             )}
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 26 }}>
-              <SummaryCard label="Total Unit" value={activeStats.total} color={COLORS.brandDark} />
-              {STATUS_SETS[section].options.map((opt) => (
-                <SummaryCard key={opt.value} label={opt.value} value={activeStats.byStatus[opt.value] || 0} color={opt.color} dot dotColor={opt.color} />
-              ))}
-            </div>
+            {section === "other" ? (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 26 }}>
+                  <SummaryCard label="Total Item" value={report.other.entries.filter((it) => it.title || it.description).length} color={COLORS.brandDark} />
+                </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              {report[section].groups.map((g) => (
-                <GroupBlock
-                  key={g.id}
-                  section={section}
-                  group={g}
-                  onUpdateGroup={(patch) => updateGroup(g.id, patch)}
-                  onRemoveGroup={() => removeGroup(g.id)}
-                  onAddUnit={() => addUnit(g.id)}
-                  onRemoveUnit={(unitId) => removeUnit(g.id, unitId)}
-                  onUpdateUnit={(unitId, patch) => updateUnit(g.id, unitId, patch)}
-                  onPhotoUpload={(unitId, file) => handlePhotoUpload(g.id, unitId, file)}
-                  onOpenLightbox={(src, label) => setLightbox({ src, label })}
-                  canRemoveGroup={report[section].groups.length > 1}
-                />
-              ))}
-            </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                  {report.other.entries.map((entry) => (
+                    <OtherEntryCard
+                      key={entry.id}
+                      entry={entry}
+                      onUpdate={(patch) => updateOtherEntry(entry.id, patch)}
+                      onRemove={() => removeOtherEntry(entry.id)}
+                      onPhotoUpload={(file) => handleOtherPhotoUpload(entry.id, file)}
+                      onOpenLightbox={(src, label) => setLightbox({ src, label })}
+                      canRemove={report.other.entries.length > 1}
+                    />
+                  ))}
+                </div>
 
-            <button onClick={addGroup} style={{ ...btnGhost, marginTop: 14, width: "100%", borderStyle: "dashed", padding: "12px" }}>
-              + Tambah Kelompok Event / Lokasi
-            </button>
+                <button onClick={addOtherEntry} style={{ ...btnGhost, marginTop: 14, width: "100%", borderStyle: "dashed", padding: "12px" }}>
+                  + Tambah Item Lain
+                </button>
+              </>
+            ) : (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 26 }}>
+                  <SummaryCard label="Total Unit" value={activeStats.total} color={COLORS.brandDark} />
+                  {STATUS_SETS[section].options.map((opt) => (
+                    <SummaryCard key={opt.value} label={opt.value} value={activeStats.byStatus[opt.value] || 0} color={opt.color} dot dotColor={opt.color} />
+                  ))}
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                  {report[section].groups.map((g) => (
+                    <GroupBlock
+                      key={g.id}
+                      section={section}
+                      group={g}
+                      onUpdateGroup={(patch) => updateGroup(g.id, patch)}
+                      onRemoveGroup={() => removeGroup(g.id)}
+                      onAddUnit={() => addUnit(g.id)}
+                      onRemoveUnit={(unitId) => removeUnit(g.id, unitId)}
+                      onUpdateUnit={(unitId, patch) => updateUnit(g.id, unitId, patch)}
+                      onBulkAddUnits={(units) => bulkAddUnits(g.id, units)}
+                      onPhotoUpload={(unitId, file) => handlePhotoUpload(g.id, unitId, file)}
+                      onOpenLightbox={(src, label) => setLightbox({ src, label })}
+                      canRemoveGroup={report[section].groups.length > 1}
+                    />
+                  ))}
+                </div>
+
+                <button onClick={addGroup} style={{ ...btnGhost, marginTop: 14, width: "100%", borderStyle: "dashed", padding: "12px" }}>
+                  + Tambah Kelompok Event / Lokasi
+                </button>
+              </>
+            )}
 
             <div style={{ marginTop: 28 }}>
               <label style={{ fontSize: 12, fontWeight: 700, color: COLORS.inkSoft, textTransform: "uppercase", letterSpacing: 0.5 }}>
@@ -653,9 +757,19 @@ function SummaryCard({ label, value, color, dot, dotColor }) {
   );
 }
 
-function GroupBlock({ section, group, onUpdateGroup, onRemoveGroup, onAddUnit, onRemoveUnit, onUpdateUnit, onPhotoUpload, onOpenLightbox, canRemoveGroup }) {
+function GroupBlock({ section, group, onUpdateGroup, onRemoveGroup, onAddUnit, onRemoveUnit, onUpdateUnit, onBulkAddUnits, onPhotoUpload, onOpenLightbox, canRemoveGroup }) {
   const opts = STATUS_SETS[section].options;
   const filled = group.units.filter((u) => u.name || u.terminalId);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkText, setBulkText] = useState("");
+
+  const applyBulk = () => {
+    const parsed = parseBulkUnits(bulkText, section);
+    if (parsed.length === 0) return;
+    onBulkAddUnits(parsed);
+    setBulkText("");
+    setBulkOpen(false);
+  };
 
   return (
     <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 12, overflow: "hidden" }}>
@@ -747,10 +861,86 @@ function GroupBlock({ section, group, onUpdateGroup, onRemoveGroup, onAddUnit, o
         </table>
       </div>
 
-      <div style={{ padding: "8px 14px 12px" }}>
-        <button onClick={onAddUnit} style={{ ...btnGhost, fontSize: 12.5, padding: "6px 12px" }}>
-          + Tambah Unit
-        </button>
+      <div style={{ padding: "8px 14px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={onAddUnit} style={{ ...btnGhost, fontSize: 12.5, padding: "6px 12px" }}>
+            + Tambah Unit
+          </button>
+          <button onClick={() => setBulkOpen((o) => !o)} style={{ ...btnGhost, fontSize: 12.5, padding: "6px 12px" }}>
+            ⚡ Input Cepat (Tempel Banyak Baris)
+          </button>
+        </div>
+        {bulkOpen && (
+          <div style={{ background: COLORS.lineSoft, border: `1px solid ${COLORS.line}`, borderRadius: 8, padding: 10 }}>
+            <div style={{ fontSize: 11.5, color: COLORS.inkSoft, marginBottom: 6, lineHeight: 1.5 }}>
+              Satu unit per baris. Tempel langsung dari Excel/Sheets, atau pisahkan dengan koma:
+              <br />
+              <span className="mono">Nama Lokasi, Terminal ID, Simcard</span>
+            </div>
+            <textarea
+              value={bulkText}
+              onChange={(e) => setBulkText(e.target.value)}
+              placeholder={"RI Fest-1, nas_0072010800000560, 081413965862\nRI Fest-2, nas_0072010800000549, 081413966180"}
+              rows={4}
+              className="mono"
+              style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${COLORS.line}`, fontSize: 12, resize: "vertical", background: COLORS.surface }}
+            />
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button onClick={applyBulk} style={{ ...btnPrimary, fontSize: 12.5, padding: "6px 14px" }}>
+                Tambahkan ke Kelompok
+              </button>
+              <button
+                onClick={() => {
+                  setBulkOpen(false);
+                  setBulkText("");
+                }}
+                style={{ ...btnGhost, fontSize: 12.5, padding: "6px 14px" }}
+              >
+                Batal
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Free-form card for non-machine items (simcards, standing banners, or
+// anything that doesn't fit a fixed category) — just a title, description,
+// and photo evidence, no status/category dropdowns.
+function OtherEntryCard({ entry, onUpdate, onRemove, onPhotoUpload, onOpenLightbox, canRemove }) {
+  return (
+    <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 12, padding: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <input
+          value={entry.title}
+          onChange={(e) => onUpdate({ title: e.target.value })}
+          placeholder="Nama barang / item (mis. Standing Banner, Simcard cadangan)"
+          className="disp"
+          style={{ flex: 1, background: "transparent", border: "none", borderBottom: `1px solid ${COLORS.line}`, fontSize: 15, fontWeight: 700, color: COLORS.brandDark, padding: "4px 2px" }}
+        />
+        {canRemove && (
+          <button onClick={onRemove} style={btnIcon} aria-label="Hapus item">
+            ✕
+          </button>
+        )}
+      </div>
+      <textarea
+        value={entry.description}
+        onChange={(e) => onUpdate({ description: e.target.value })}
+        placeholder="Deskripsi / keterangan tentang item ini…"
+        rows={2}
+        style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${COLORS.line}`, fontSize: 13, resize: "vertical", background: COLORS.bg, marginBottom: 10 }}
+      />
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <PhotoCell
+          unit={entry}
+          onUpload={onPhotoUpload}
+          onRemove={() => onUpdate({ photo: null })}
+          onView={() => onOpenLightbox(entry.photo, entry.title || "Foto item")}
+        />
+        <span style={{ fontSize: 11.5, color: COLORS.inkSoft }}>Foto bukti (opsional)</span>
       </div>
     </div>
   );
@@ -813,6 +1003,10 @@ function PrintReport({ report, date, fmtDateLabel }) {
         <PrintSection key={sec} sectionKey={sec} data={report[sec]} />
       ))}
 
+      {report.other && report.other.entries.some((it) => it.title || it.description) && (
+        <PrintOtherSection entries={report.other.entries} />
+      )}
+
       {report.note && report.note.trim() && (
         <div style={{ marginTop: 14, pageBreakInside: "avoid" }}>
           <div className="disp printSectionTitle" style={{ fontSize: 13, fontWeight: 700, color: COLORS.brandDark }}>
@@ -833,6 +1027,32 @@ const CATEGORY_PRINT_COLORS = {
   "Deployment Request": { color: "#5B3FB0", bg: "#EFEBFB" },
   Replacement: { color: "#C8503F", bg: "#FBEAE8" },
 };
+
+function PrintOtherSection({ entries }) {
+  const filled = entries.filter((it) => it.title || it.description);
+  return (
+    <div style={{ marginBottom: 26, pageBreakInside: "auto" }}>
+      <div className="printSectionTitle">
+        <div className="disp" style={{ fontSize: 15.5, fontWeight: 700, color: COLORS.brandDark }}>
+          Lainnya
+        </div>
+      </div>
+      {filled.map((it) => (
+        <div key={it.id} style={{ display: "flex", gap: 14, marginBottom: 14, pageBreakInside: "avoid" }}>
+          {it.photo && (
+            <div style={{ width: 110, height: 110, flexShrink: 0, borderRadius: 8, border: `1px solid ${COLORS.line}`, background: COLORS.lineSoft, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+              <img src={it.photo} alt={it.title} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+            </div>
+          )}
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: COLORS.ink, marginBottom: 3 }}>{it.title || "(tanpa nama)"}</div>
+            <div style={{ fontSize: 11, color: COLORS.inkSoft, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{it.description}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function PrintSection({ sectionKey, data }) {
   const cfg = STATUS_SETS[sectionKey];
