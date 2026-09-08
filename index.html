@@ -317,7 +317,17 @@ function App() {
           @page { size: A4; margin: 16mm 14mm; }
           html, body { background: #fff !important; }
           #app-root > *:not(#print-area) { display: none !important; }
-          #print-area { display: block !important; }
+          #print-area {
+            display: block !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+            color-adjust: exact;
+          }
+          #print-area * {
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+            color-adjust: exact;
+          }
         }
         .printHeader {
           background: ${COLORS.brand};
@@ -341,12 +351,21 @@ function App() {
           break-inside: avoid;
         }
         .printPhotoCard:nth-child(3n) { margin-right: 0; }
-        .printPhotoCard img {
+        .printPhotoCard .printPhotoFrame {
           width: 100%;
-          height: 130px;
-          object-fit: cover;
+          height: 150px;
           border-radius: 8px;
           border: 1px solid ${COLORS.line};
+          background: ${COLORS.lineSoft};
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          overflow: hidden;
+        }
+        .printPhotoCard img {
+          max-width: 100%;
+          max-height: 100%;
+          object-fit: contain;
           display: block;
         }
         .printFooterNote {
@@ -874,7 +893,9 @@ function PrintSection({ sectionKey, data }) {
           <div>
             {withPhoto.map((u) => (
               <div key={u.id} className="printPhotoCard">
-                <img src={u.photo} alt={u.name || u.terminalId} />
+                <div className="printPhotoFrame">
+                  <img src={u.photo} alt={u.name || u.terminalId} />
+                </div>
                 <div style={{ fontSize: 10, fontWeight: 700, marginTop: 4, color: COLORS.ink, textAlign: "center" }}>{u.name || "—"}</div>
                 <div style={{ fontSize: 8.5, color: COLORS.inkSoft, fontFamily: "'IBM Plex Mono', monospace", textAlign: "center" }}>{u.terminalId}</div>
               </div>
