@@ -314,10 +314,47 @@ function App() {
         }
         #print-area { display: none; }
         @media print {
-          @page { size: A4; margin: 14mm 12mm; }
+          @page { size: A4; margin: 16mm 14mm; }
           html, body { background: #fff !important; }
           #app-root > *:not(#print-area) { display: none !important; }
           #print-area { display: block !important; }
+        }
+        .printHeader {
+          background: ${COLORS.brand};
+          color: #fff;
+          padding: 18px 22px;
+          border-radius: 10px;
+          margin-bottom: 22px;
+        }
+        .printSectionTitle {
+          border-left: 4px solid ${COLORS.brand};
+          padding: 2px 0 2px 10px;
+          margin: 0 0 8px;
+        }
+        .printGroupRow:nth-child(even) { background: ${COLORS.lineSoft}; }
+        .printPhotoCard {
+          display: inline-block;
+          width: 30%;
+          margin: 0 3.33% 20px 0;
+          vertical-align: top;
+          page-break-inside: avoid;
+          break-inside: avoid;
+        }
+        .printPhotoCard:nth-child(3n) { margin-right: 0; }
+        .printPhotoCard img {
+          width: 100%;
+          height: 130px;
+          object-fit: cover;
+          border-radius: 8px;
+          border: 1px solid ${COLORS.line};
+          display: block;
+        }
+        .printFooterNote {
+          margin-top: 30px;
+          padding-top: 10px;
+          border-top: 1px solid ${COLORS.line};
+          font-size: 9.5px;
+          color: ${COLORS.inkFaint};
         }
       `}</style>
 
@@ -736,28 +773,40 @@ function PhotoCell({ unit, onUpload, onRemove, onView }) {
 // Print-only view: renders the FULL report (QC1 + QC2 + photos) regardless of
 // which tab is active on screen.
 function PrintReport({ report, date, fmtDateLabel }) {
+  const generatedAt = new Date().toLocaleString("id-ID", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
   return (
     <div id="print-area">
-      <div style={{ borderBottom: `3px solid ${COLORS.brand}`, paddingBottom: 10, marginBottom: 16 }}>
-        <div className="disp" style={{ fontSize: 20, fontWeight: 700, color: COLORS.brandDark }}>
-          Laporan Harian Warehouse
+      <div className="printHeader" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+        <div>
+          <div className="disp" style={{ fontSize: 21, fontWeight: 700 }}>Laporan Harian Warehouse</div>
+          <div style={{ fontSize: 13, opacity: 0.9, marginTop: 3 }}>{fmtDateLabel(date)}</div>
         </div>
-        <div style={{ fontSize: 12.5, color: COLORS.inkSoft, marginTop: 2 }}>{fmtDateLabel(date)}</div>
+        <div style={{ fontSize: 9.5, opacity: 0.75, textAlign: "right" }}>Dicetak {generatedAt}</div>
       </div>
+
       {Object.keys(STATUS_SETS).map((sec) => (
         <PrintSection key={sec} sectionKey={sec} data={report[sec]} />
       ))}
+
       {report.note && report.note.trim() && (
-        <div style={{ marginTop: 10, pageBreakInside: "avoid" }}>
-          <div className="disp" style={{ fontSize: 13, fontWeight: 700, color: COLORS.brandDark, marginBottom: 4 }}>
+        <div style={{ marginTop: 14, pageBreakInside: "avoid" }}>
+          <div className="disp printSectionTitle" style={{ fontSize: 13, fontWeight: 700, color: COLORS.brandDark }}>
             Catatan Tambahan
           </div>
-          <div style={{ fontSize: 12, color: COLORS.ink, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{report.note}</div>
+          <div style={{ fontSize: 12, color: COLORS.ink, lineHeight: 1.6, whiteSpace: "pre-wrap", paddingLeft: 10 }}>{report.note}</div>
         </div>
       )}
+
+      <div className="printFooterNote">Dihasilkan otomatis dari Dashboard Laporan Harian Warehouse.</div>
     </div>
   );
 }
+
+const CATEGORY_PRINT_COLORS = {
+  Event: { color: "#5B3FB0", bg: "#EFEBFB" },
+  "Permanent Deployment": { color: "#1F5E3C", bg: "#E7F3EC" },
+  "New Unit Intake": { color: "#B8860B", bg: "#FBF3DE" },
+};
 
 function PrintSection({ sectionKey, data }) {
   const cfg = STATUS_SETS[sectionKey];
@@ -768,37 +817,41 @@ function PrintSection({ sectionKey, data }) {
   const withPhoto = allUnits.filter((u) => u.photo);
 
   return (
-    <div style={{ marginBottom: 22, pageBreakInside: "auto" }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6 }}>
-        <div className="disp" style={{ fontSize: 15, fontWeight: 700, color: COLORS.brandDark }}>
+    <div style={{ marginBottom: 26, pageBreakInside: "auto" }}>
+      <div className="printSectionTitle" style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+        <div className="disp" style={{ fontSize: 15.5, fontWeight: 700, color: COLORS.brandDark }}>
           {cfg.label}
         </div>
-        <div style={{ fontSize: 11, color: COLORS.inkSoft }}>{counts.map((c) => `${c.value}: ${c.count}`).join("  ·  ")}</div>
+        <div style={{ fontSize: 11, color: COLORS.inkSoft }}>{counts.map((c) => `${c.value}: ${c.count}`).join("   ·   ")}</div>
       </div>
+
       {data.groups.map((g) => {
         const units = g.units.filter((u) => u.name || u.terminalId);
         if (units.length === 0) return null;
+        const catStyle = CATEGORY_PRINT_COLORS[g.category] || CATEGORY_PRINT_COLORS.Event;
         return (
-          <div key={g.id} style={{ marginBottom: 12, pageBreakInside: "avoid" }}>
-            <div style={{ fontSize: 12.5, fontWeight: 700, color: COLORS.ink, margin: "8px 0 4px" }}>
-              {g.name || "Tanpa nama kelompok"}
-              <span style={{ fontWeight: 500, color: COLORS.inkSoft, fontSize: 11 }}> — {g.category || "Event"}</span>
+          <div key={g.id} style={{ marginBottom: 16, pageBreakInside: "avoid" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "10px 0 5px" }}>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: COLORS.ink }}>{g.name || "Tanpa nama kelompok"}</span>
+              <span style={{ fontSize: 9.5, fontWeight: 700, color: catStyle.color, background: catStyle.bg, borderRadius: 20, padding: "2px 9px" }}>
+                {g.category || "Event"}
+              </span>
             </div>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
               <thead>
-                <tr style={{ background: COLORS.lineSoft }}>
-                  <th style={printTh}>No.</th>
-                  <th style={printTh}>Location Name</th>
-                  <th style={printTh}>Terminal ID</th>
-                  <th style={printTh}>Simcard</th>
-                  <th style={printTh}>Status</th>
+                <tr style={{ background: COLORS.brand }}>
+                  <th style={printThDark}>No.</th>
+                  <th style={printThDark}>Location Name</th>
+                  <th style={printThDark}>Terminal ID</th>
+                  <th style={printThDark}>Simcard</th>
+                  <th style={printThDark}>Status</th>
                 </tr>
               </thead>
               <tbody>
                 {units.map((u, i) => {
                   const o = opts.find((x) => x.value === u.status) || opts[0];
                   return (
-                    <tr key={u.id}>
+                    <tr key={u.id} className="printGroupRow">
                       <td style={printTd}>{i + 1}</td>
                       <td style={printTd}>{u.name}</td>
                       <td style={{ ...printTd, fontFamily: "'IBM Plex Mono', monospace" }}>{u.terminalId}</td>
@@ -812,17 +865,18 @@ function PrintSection({ sectionKey, data }) {
           </div>
         );
       })}
+
       {withPhoto.length > 0 && (
-        <div style={{ marginTop: 8 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.ink, marginBottom: 6 }}>
+        <div style={{ marginTop: 10 }}>
+          <div className="disp" style={{ fontSize: 12.5, fontWeight: 700, color: COLORS.brandDark, marginBottom: 10 }}>
             Lampiran Foto — {cfg.label} ({withPhoto.length} unit)
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+          <div>
             {withPhoto.map((u) => (
-              <div key={u.id} style={{ pageBreakInside: "avoid", textAlign: "center" }}>
-                <img src={u.photo} alt={u.name || u.terminalId} style={{ width: "100%", height: 90, objectFit: "cover", borderRadius: 6, border: `1px solid ${COLORS.line}` }} />
-                <div style={{ fontSize: 9.5, fontWeight: 700, marginTop: 3, color: COLORS.ink }}>{u.name || "—"}</div>
-                <div style={{ fontSize: 8.5, color: COLORS.inkSoft, fontFamily: "'IBM Plex Mono', monospace" }}>{u.terminalId}</div>
+              <div key={u.id} className="printPhotoCard">
+                <img src={u.photo} alt={u.name || u.terminalId} />
+                <div style={{ fontSize: 10, fontWeight: 700, marginTop: 4, color: COLORS.ink, textAlign: "center" }}>{u.name || "—"}</div>
+                <div style={{ fontSize: 8.5, color: COLORS.inkSoft, fontFamily: "'IBM Plex Mono', monospace", textAlign: "center" }}>{u.terminalId}</div>
               </div>
             ))}
           </div>
@@ -833,7 +887,8 @@ function PrintSection({ sectionKey, data }) {
 }
 
 const printTh = { textAlign: "left", padding: "5px 7px", border: `1px solid ${COLORS.line}`, fontWeight: 700, color: COLORS.inkSoft, fontSize: 10, textTransform: "uppercase" };
-const printTd = { padding: "5px 7px", border: `1px solid ${COLORS.line}` };
+const printThDark = { textAlign: "left", padding: "6px 8px", fontWeight: 700, color: "#fff", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.3 };
+const printTd = { padding: "6px 8px", borderBottom: `1px solid ${COLORS.lineSoft}` };
 const th = { padding: "8px 12px" };
 const td = { padding: "6px 12px", verticalAlign: "middle" };
 const cellInput = { width: "100%", border: "none", background: "transparent", fontSize: 13, padding: "6px 4px", borderRadius: 6, color: COLORS.ink };
