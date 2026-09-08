@@ -66,7 +66,13 @@ const STATUS_SETS = {
 // independent of QC1/QC2 — tags whether a group is tied to an event, a
 // permanent deployment location, or a newly purchased unit, since both QC
 // types can contain any of these
-const CATEGORY_OPTIONS = ["Event", "Permanent Deployment", "New Unit Intake"];
+// categories reflect what actually happens per QC type:
+// QC1 = machine withdrawal & incoming (new/returned) machines
+// QC2 = deployment requests & replacements
+const CATEGORY_OPTIONS_BY_SECTION = {
+  qc1: ["Withdrawal", "Incoming"],
+  qc2: ["Deployment Request", "Replacement"],
+};
 
 // data is stored in this browser's localStorage — persists across sessions
 // on this device, but doesn't sync to other devices/browsers
@@ -79,7 +85,7 @@ function emptyUnit(section) {
   return { id: uid(), name: "", terminalId: "", simcard: "", status: STATUS_SETS[section].options[0].value, photo: null };
 }
 function emptyGroup(section, name = "Kelompok Baru") {
-  return { id: uid(), name, category: "Event", units: [emptyUnit(section)] };
+  return { id: uid(), name, category: CATEGORY_OPTIONS_BY_SECTION[section][0], units: [emptyUnit(section)] };
 }
 function defaultSection(section) {
   return { groups: [emptyGroup(section)] };
@@ -662,11 +668,11 @@ function GroupBlock({ section, group, onUpdateGroup, onRemoveGroup, onAddUnit, o
           style={{ flex: 1, background: "transparent", border: "none", fontSize: 15, fontWeight: 700, color: COLORS.brandDark, padding: "4px 2px" }}
         />
         <select
-          value={group.category || "Event"}
+          value={group.category || CATEGORY_OPTIONS_BY_SECTION[section][0]}
           onChange={(e) => onUpdateGroup({ category: e.target.value })}
           style={{ border: `1px solid ${COLORS.line}`, background: COLORS.surface, color: COLORS.ink, borderRadius: 20, padding: "4px 10px", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}
         >
-          {CATEGORY_OPTIONS.map((c) => (
+          {CATEGORY_OPTIONS_BY_SECTION[section].map((c) => (
             <option key={c} value={c}>
               {c}
             </option>
@@ -822,9 +828,10 @@ function PrintReport({ report, date, fmtDateLabel }) {
 }
 
 const CATEGORY_PRINT_COLORS = {
-  Event: { color: "#5B3FB0", bg: "#EFEBFB" },
-  "Permanent Deployment": { color: "#1F5E3C", bg: "#E7F3EC" },
-  "New Unit Intake": { color: "#B8860B", bg: "#FBF3DE" },
+  Withdrawal: { color: "#B8860B", bg: "#FBF3DE" },
+  Incoming: { color: "#3B6FB0", bg: "#E9F1FB" },
+  "Deployment Request": { color: "#5B3FB0", bg: "#EFEBFB" },
+  Replacement: { color: "#C8503F", bg: "#FBEAE8" },
 };
 
 function PrintSection({ sectionKey, data }) {
@@ -847,13 +854,14 @@ function PrintSection({ sectionKey, data }) {
       {data.groups.map((g) => {
         const units = g.units.filter((u) => u.name || u.terminalId);
         if (units.length === 0) return null;
-        const catStyle = CATEGORY_PRINT_COLORS[g.category] || CATEGORY_PRINT_COLORS.Event;
+        const fallbackCategory = CATEGORY_OPTIONS_BY_SECTION[sectionKey][0];
+        const catStyle = CATEGORY_PRINT_COLORS[g.category] || CATEGORY_PRINT_COLORS[fallbackCategory];
         return (
           <div key={g.id} style={{ marginBottom: 16, pageBreakInside: "avoid" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "10px 0 5px" }}>
               <span style={{ fontSize: 12.5, fontWeight: 700, color: COLORS.ink }}>{g.name || "Tanpa nama kelompok"}</span>
               <span style={{ fontSize: 9.5, fontWeight: 700, color: catStyle.color, background: catStyle.bg, borderRadius: 20, padding: "2px 9px" }}>
-                {g.category || "Event"}
+                {g.category || fallbackCategory}
               </span>
             </div>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
